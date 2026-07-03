@@ -1,5 +1,5 @@
 import type { CreateAlphaFileItem, CreateAlphaTextItem, ItemType } from "@mydrop/core";
-import { FileStore, sha256 } from "@mydrop/core";
+import { ContentStore, sha256 } from "@mydrop/core";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
@@ -29,7 +29,7 @@ const v1Client = new BetterSqlite3Client(v1Db);
 await migrateV1(v1Client);
 const deviceId = process.env.MYDROP_DEVICE_ID ?? `desktop_${Date.now().toString(36)}`;
 
-const fileStore = new FileStore(v1Client, new NodeChunkStore(filesDir), sha256);
+const fileStore = new ContentStore(v1Client, new NodeChunkStore(filesDir), sha256);
 const pairingHandler = new PairingHandler(v1Client);
 
 let handler: (req: IncomingMessage, res: ServerResponse) => void;

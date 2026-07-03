@@ -8,7 +8,7 @@ export function sha256(data: Uint8Array): Promise<string> {
 }
 
 async function webCryptoSha256(data: Uint8Array): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", data as unknown as ArrayBuffer);
+  const hash = await crypto.subtle.digest("SHA-256", new Uint8Array(data));
   const bytes = new Uint8Array(hash);
   return bytesToHex(bytes);
 }

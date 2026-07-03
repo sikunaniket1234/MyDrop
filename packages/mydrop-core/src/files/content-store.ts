@@ -1,6 +1,6 @@
 import type { DatabaseClient, SqlPrimitive } from "../db/client.js";
+import { chunkData, CHUNK_SIZE_BYTES } from "./chunker.js";
 import type { HashFunction } from "./hash.js";
-export const CHUNK_SIZE = 4 * 1024 * 1024;
 
 export interface FileRecord {
   readonly id: string;
@@ -43,7 +43,7 @@ export interface ChunkDataStore {
   delete(hash: string): Promise<void>;
 }
 
-export class FileStore {
+export class ContentStore {
   readonly #db: DatabaseClient;
   readonly #chunks: ChunkDataStore;
   readonly #hash: HashFunction;
@@ -53,7 +53,7 @@ export class FileStore {
     db: DatabaseClient,
     chunks: ChunkDataStore,
     hash: HashFunction,
-    chunkSize = CHUNK_SIZE,
+    chunkSize: number = CHUNK_SIZE_BYTES,
   ) {
     this.#db = db;
     this.#chunks = chunks;
@@ -69,9 +69,9 @@ export class FileStore {
     const existing = await this.getFile(fileHash);
     if (existing) return existing;
 
-    const chunks = this.#splitIntoChunks(data);
+    const chunks = chunkData(data, this.#chunkSize);
     const chunkHashes = await Promise.all(
-      chunks.map((chunk) => this.#hash(chunk)),
+      chunks.map((chunk) => this.#hash(chunk.data)),
     );
 
     await this.#db.exec("BEGIN IMMEDIATE");
@@ -87,11 +87,11 @@ export class FileStore {
         await this.#db.exec(
           `INSERT OR IGNORE INTO file_chunks (file_id, chunk_index, chunk_hash, size, local_path)
            VALUES (?, ?, ?, ?, ?)`,
-          [fileHash, i, chunkHash, chunks[i]!.length, null],
+          [fileHash, i, chunkHash, chunks[i]!.data.length, null],
         );
 
         if (!(await this.#chunks.exists(chunkHash))) {
-          await this.#chunks.write(chunkHash, chunks[i]!);
+          await this.#chunks.write(chunkHash, chunks[i]!.data);
         }
       }
 
@@ -226,14 +226,5 @@ export class FileStore {
       await this.#db.exec("ROLLBACK");
       throw error;
     }
-  }
-
-  #splitIntoChunks(data: Uint8Array): Uint8Array[] {
-    const chunks: Uint8Array[] = [];
-    for (let offset = 0; offset < data.length; offset += this.#chunkSize) {
-      const end = Math.min(offset + this.#chunkSize, data.length);
-      chunks.push(data.slice(offset, end));
-    }
-    return chunks;
   }
 }
