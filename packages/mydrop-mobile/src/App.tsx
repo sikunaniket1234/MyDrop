@@ -1,10 +1,6 @@
 import type { Item } from "@mydrop/core";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
-  FlatList,
-  Linking,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
@@ -12,21 +8,39 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { launchImageLibrary } from "react-native-image-picker";
-import RNFS from "react-native-fs";
 import { io } from "socket.io-client";
 import { openV1MobileStore, type V1MobileStore } from "./v1/mobile-v1-store.js";
 import { VaultScreen } from "./v1/VaultScreen.js";
+import { InboxScreen } from "./v1/InboxScreen.js";
+import { DetailScreen } from "./v1/DetailScreen.js";
+import { DevicesScreen } from "./v1/DevicesScreen.js";
+import { PairingScreen } from "./v1/PairingScreen.js";
+import { ConflictsScreen } from "./v1/ConflictsScreen.js";
+import { TabBar, type TabItem } from "./v1/TabBar.js";
+import { theme } from "./v1/theme.js";
 import { SyncPeerClient, type SyncPeerStatus } from "./sync/sync-peer-client.js";
 import { MdnsBrowser } from "./sync/mdns-browser.js";
-import { pickAnyFile } from "./native/file-picker.js";
 
 type AppPhase = "vault" | "main";
+type Screen =
+  | "inbox"
+  | "detail"
+  | "devices"
+  | "pairing"
+  | "conflicts";
+
+const TABS: TabItem[] = [
+  { id: "inbox", label: "Inbox", icon: "📥" },
+  { id: "devices", label: "Devices", icon: "📱" },
+  { id: "conflicts", label: "Conflicts", icon: "⚠", badge: 1, warn: true },
+  { id: "pairing", label: "Pair", icon: "🔗" },
+];
 
 export function MyDropAlphaApp(): React.ReactElement {
   const [phase, setPhase] = useState<AppPhase>("vault");
   const [passphrase, setPassphrase] = useState("");
-  const [, setVaultMode] = useState<"auto" | "passphrase">("auto");
+  const [screen, setScreen] = useState<Screen>("inbox");
+  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [apiBase, setApiBase] = useState("http://10.0.2.2:4317");
   const [apiBaseInput, setApiBaseInput] = useState(apiBase);
   const [items, setItems] = useState<Item[]>([]);
@@ -37,15 +51,16 @@ export function MyDropAlphaApp(): React.ReactElement {
   const syncPeer = useRef<SyncPeerClient | null>(null);
   const mdnsRef = useRef<MdnsBrowser | null>(null);
 
-  const socket = useMemo(() => io(apiBase, { autoConnect: false, transports: ["websocket"] }), [apiBase]);
+  const socket = useMemo(
+    () => io(apiBase, { autoConnect: false, transports: ["websocket"] }),
+    [apiBase],
+  );
 
   async function handleVaultUnlock(): Promise<void> {
     const result = await openV1MobileStore(passphrase);
     if (result.needsPassphrase) return;
-
     setStore(result.store);
     setPhase("main");
-
     const peer = new SyncPeerClient(result.store.syncEngine, {
       onStatusChange: setSyncStatus,
       onSyncComplete: () => {
@@ -57,8 +72,7 @@ export function MyDropAlphaApp(): React.ReactElement {
 
   useEffect(() => {
     if (phase !== "main" || !store) return;
-
-    const mdns = new MdnsBrowser((nodes) => {
+    const mdns = new MdnsBrowser(nodes => {
       for (const node of nodes) {
         const url = `http://${node.host}:${node.port}`;
         setApiBase(url);
@@ -68,7 +82,6 @@ export function MyDropAlphaApp(): React.ReactElement {
     });
     mdns.start();
     mdnsRef.current = mdns;
-
     return () => {
       mdns.stop();
     };
@@ -76,8 +89,7 @@ export function MyDropAlphaApp(): React.ReactElement {
 
   useEffect(() => {
     if (phase !== "main" || !store) return;
-
-    void socket.connect();
+    socket.connect();
     socket.on("connect", () => {
       setConnected(true);
       syncPeer.current?.connect(apiBase);
@@ -90,9 +102,13 @@ export function MyDropAlphaApp(): React.ReactElement {
       setItems(snapshot as Item[]);
     });
     socket.on("v1:item:created", item => {
-      setItems(current => [item as Item, ...current.filter(existing => existing.id !== (item as Item).id)]);
+      setItems(current => [
+        item as Item,
+        ...current.filter(
+          (existing: Item) => existing.id !== (item as Item).id,
+        ),
+      ]);
     });
-
     return () => {
       socket.off("connect");
       socket.off("disconnect");
@@ -107,7 +123,6 @@ export function MyDropAlphaApp(): React.ReactElement {
     return (
       <VaultScreen
         onUnlock={result => {
-          setVaultMode(result.vaultMode);
           setPassphrase(result.passphrase);
           void handleVaultUnlock();
         }}
@@ -115,9 +130,7 @@ export function MyDropAlphaApp(): React.ReactElement {
           void openV1MobileStore().then(result => {
             if (result.needsPassphrase) return;
             setStore(result.store);
-            setVaultMode(result.vaultMode);
             setPhase("main");
-
             const peer = new SyncPeerClient(result.store.syncEngine, {
               onStatusChange: setSyncStatus,
               onSyncComplete: () => {
@@ -131,188 +144,9 @@ export function MyDropAlphaApp(): React.ReactElement {
     );
   }
 
-  async function shareText(): Promise<void> {
-    const body = text.trim();
-    if (!body || !store) return;
-
-    const title = body.length > 48 ? `${body.slice(0, 45)}...` : body;
-    const item = await store.createItem({
-      type: "text",
-      title,
-      content: body,
-      fileId: null,
-    });
-    setItems(current => [item, ...current]);
-    setText("");
-
-    try {
-      await fetch(`${apiBase}/v1/items`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "text", title, content: body }),
-      });
-    } catch {
-      // will sync via WebSocket later
-    }
-  }
-
-  async function shareImage(): Promise<void> {
-    if (!store) return;
-
-    try {
-      const result = await launchImageLibrary({ mediaType: "mixed", selectionLimit: 1 });
-      if (result.didCancel || !result.assets?.[0]) return;
-
-      const asset = result.assets[0];
-      if (!asset.uri) return;
-
-      const filePath = asset.uri;
-      const mimeType = asset.type ?? "application/octet-stream";
-      const fileName = asset.fileName ?? `file-${Date.now()}`;
-
-      const base64 = await RNFS.readFile(filePath, "base64");
-      const binaryStr = atob(base64);
-      const bytes = new Uint8Array(binaryStr.length);
-      for (let i = 0; i < binaryStr.length; i++) {
-        bytes[i] = binaryStr.charCodeAt(i);
-      }
-
-      let fileId: string | null = null;
-      try {
-        const uploadRes = await fetch(`${apiBase}/v1/files`, {
-          method: "POST",
-          headers: { "content-type": mimeType },
-          body: bytes,
-        });
-        if (uploadRes.ok) {
-          const fileRecord = (await uploadRes.json()) as { id: string };
-          fileId = fileRecord.id;
-        }
-      } catch {
-        // fallback: embed as data URL content
-      }
-
-      if (fileId) {
-        const item = await store.createItem({
-          type: "file",
-          title: fileName,
-          content: null,
-          fileId,
-        });
-        setItems(current => [item, ...current]);
-      } else {
-        const dataUrl = `data:${mimeType};base64,${base64}`;
-        const item = await store.createItem({
-          type: "file",
-          title: fileName,
-          content: dataUrl,
-          fileId: null,
-        });
-        setItems(current => [item, ...current]);
-      }
-    } catch (error: unknown) {
-      if (error instanceof Error) {
-        Alert.alert("File error", error.message);
-      }
-    }
-  }
-
-  async function pickAndShareFile(): Promise<void> {
-    if (!store) return;
-
-    try {
-      const picked = await pickAnyFile();
-      if (!picked) return;
-
-      const binaryStr = atob(picked.base64);
-      const bytes = new Uint8Array(binaryStr.length);
-      for (let i = 0; i < binaryStr.length; i++) {
-        bytes[i] = binaryStr.charCodeAt(i);
-      }
-
-      let fileId: string | null = null;
-      try {
-        const uploadRes = await fetch(`${apiBase}/v1/files`, {
-          method: "POST",
-          headers: { "content-type": picked.mimeType },
-          body: bytes,
-        });
-        if (uploadRes.ok) {
-          const fileRecord = (await uploadRes.json()) as { id: string };
-          fileId = fileRecord.id;
-        }
-      } catch {
-        const dataUrl = `data:${picked.mimeType};base64,${picked.base64}`;
-        const item = await store.createItem({
-          type: "file",
-          title: picked.fileName,
-          content: dataUrl,
-          fileId: null,
-        });
-        setItems(current => [item, ...current]);
-        return;
-      }
-
-      if (fileId) {
-        const item = await store.createItem({
-          type: "file",
-          title: picked.fileName,
-          content: null,
-          fileId,
-        });
-        setItems(current => [item, ...current]);
-      }
-    } catch (error: unknown) {
-      if (error instanceof Error) {
-        Alert.alert("Picker error", error.message);
-      }
-    }
-  }
-
-  async function downloadFile(item: Item): Promise<void> {
-    const fileName = item.title ?? `mydrop-${item.id}`;
-    const dest = `${RNFS.DownloadDirectoryPath}/${fileName}`;
-
-    try {
-      if (item.fileId) {
-        const res = await fetch(`${apiBase}/v1/files/${item.fileId}/download`);
-        if (res.ok) {
-          const buf = await res.arrayBuffer();
-          const bytes = new Uint8Array(buf);
-          let binary = "";
-          for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]!);
-          }
-          const base64 = btoa(binary);
-          await RNFS.writeFile(dest, base64, "base64");
-          Alert.alert("Downloaded", `Saved to Downloads/${fileName}`, [
-            { text: "Open", onPress: () => void Linking.openURL(`file://${dest}`) },
-            { text: "OK" },
-          ]);
-          return;
-        }
-      }
-
-      if (item.content?.startsWith("data:")) {
-        const metaIndex = item.content.indexOf(",");
-        if (metaIndex === -1) throw new Error("Invalid data URL");
-        const base64 = item.content.slice(metaIndex + 1);
-        await RNFS.writeFile(dest, base64, "base64");
-        Alert.alert("Downloaded", `Saved to Downloads/${fileName}`, [
-          { text: "Open", onPress: () => void Linking.openURL(`file://${dest}`) },
-          { text: "OK" },
-        ]);
-        return;
-      }
-
-      Alert.alert("Cannot download", "No file data available");
-    } catch (error: unknown) {
-      Alert.alert("Download failed", error instanceof Error ? error.message : "Unknown error");
-    }
-  }
-
-  function isFileItem(item: Item): boolean {
-    return item.type === "file" || item.type === "image";
+  function handleSelectItem(item: Item): void {
+    setSelectedItem(item);
+    setScreen("detail");
   }
 
   const statusLabel = connected
@@ -323,185 +157,224 @@ export function MyDropAlphaApp(): React.ReactElement {
         : "Connected"
     : "Disconnected";
 
+  const isSyncing = connected && syncStatus === "syncing";
+
   return (
-    <SafeAreaView style={styles.root}>
-      <StatusBar barStyle="dark-content" />
-      <View style={styles.header}>
-        <Text style={styles.eyebrow}>MyDrop Alpha</Text>
-        <Text style={styles.title}>Inbox</Text>
-        <Text style={styles.status}>{statusLabel}</Text>
-      </View>
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor={theme.surface0} />
 
-      <View style={styles.card}>
-        <Text style={styles.label}>Desktop node URL</Text>
-        <TextInput value={apiBaseInput} onChangeText={setApiBaseInput} style={styles.input} autoCapitalize="none" />
-        <TouchableOpacity
-          style={styles.secondaryButton}
-          onPress={() => setApiBase(apiBaseInput.trim())}
-        >
-          <Text style={styles.secondaryButtonText}>Connect</Text>
-        </TouchableOpacity>
-        <TextInput
-          value={text}
-          onChangeText={setText}
-          style={[styles.input, styles.textarea]}
-          multiline
-          placeholder="Share text..."
-        />
-        <View style={styles.actions}>
-          <TouchableOpacity style={styles.secondaryButton} onPress={() => void shareImage()}>
-            <Text style={styles.secondaryButtonText}>Media</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.secondaryButton} onPress={() => void pickAndShareFile()}>
-            <Text style={styles.secondaryButtonText}>Pick file</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.primaryButton} onPress={() => void shareText()}>
-            <Text style={styles.primaryButtonText}>Send</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <FlatList
-        data={items}
-        keyExtractor={item => item.id}
-        contentContainerStyle={styles.list}
-        ListEmptyComponent={<Text style={styles.empty}>No items yet.</Text>}
-        renderItem={({ item }) => (
-          <View style={styles.item}>
-            <Text style={styles.kind}>{item.type}</Text>
-            <Text style={styles.itemTitle}>{item.title}</Text>
-            <Text style={styles.itemBody}>
-              {isFileItem(item) ? item.title : item.content}
-            </Text>
-            <Text style={styles.meta}>
-              {item.createdBy} · {new Date(item.createdAt).toLocaleString()}
-            </Text>
-            {isFileItem(item) ? (
-              <TouchableOpacity style={styles.downloadButton} onPress={() => void downloadFile(item)}>
-                <Text style={styles.downloadButtonText}>Download</Text>
-              </TouchableOpacity>
-            ) : null}
+      {screen !== "pairing" && screen !== "conflicts" && (
+        <>
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <View style={styles.logoBox}>
+                <Text style={styles.logoIcon}>📥</Text>
+              </View>
+              <Text style={styles.appName}>MyDrop</Text>
+              {isSyncing ? <View style={styles.syncDot} /> : null}
+            </View>
+            <Text style={styles.statusText}>{statusLabel}</Text>
           </View>
+
+          {screen === "inbox" && (
+            <View style={styles.composer}>
+              <TextInput
+                value={text}
+                onChangeText={setText}
+                style={styles.input}
+                multiline
+                placeholder="Share text..."
+                placeholderTextColor={theme.textMuted}
+              />
+              <View style={styles.composerActions}>
+                <TouchableOpacity
+                  style={styles.composerBtn}
+                  onPress={() => setApiBase(apiBaseInput.trim())}
+                >
+                  <Text style={styles.composerBtnText}>Connect</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.composerBtn}
+                  onPress={() => {
+                    if (text.trim() && store) {
+                      void (async () => {
+                        const item = await store.createItem({
+                          type: "text",
+                          title:
+                            text.length > 48
+                              ? `${text.slice(0, 45)}...`
+                              : text,
+                          content: text,
+                          fileId: null,
+                        });
+                        setItems(current => [item, ...current]);
+                        setText("");
+                      })();
+                    }
+                  }}
+                >
+                  <Text style={styles.composerBtnText}>Send</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </>
+      )}
+
+      <View style={styles.content}>
+        {screen === "inbox" && (
+          <InboxScreen
+            items={items}
+            onSelect={handleSelectItem}
+          />
         )}
-      />
-    </SafeAreaView>
+        {screen === "detail" && selectedItem && (
+          <DetailScreen
+            item={selectedItem}
+            onBack={() => {
+              setSelectedItem(null);
+              setScreen("inbox");
+            }}
+            apiBase={apiBase}
+          />
+        )}
+        {screen === "devices" && (
+          <DevicesScreen
+            apiBase={apiBase}
+            onPair={() => setScreen("pairing")}
+          />
+        )}
+        {screen === "pairing" && (
+          <PairingScreen
+            onComplete={() => setScreen("devices")}
+            onCancel={() => setScreen("devices")}
+          />
+        )}
+        {screen === "conflicts" && selectedItem && (
+          <ConflictsScreen
+            item={selectedItem}
+            copies={[
+              {
+                id: "a",
+                version: "A",
+                device: "Laptop",
+                time: "10:42 AM",
+                content: "Meeting notes\n— API rate limits\n— OSWAS module",
+              },
+              {
+                id: "b",
+                version: "B",
+                device: "Phone",
+                time: "10:44 AM",
+                content:
+                  "Meeting notes\n— API rate limits\n— OSWAS module\n— Action: Redis config",
+              },
+            ]}
+            onResolve={() => {}}
+            onBack={() => setScreen("inbox")}
+          />
+        )}
+      </View>
+
+      {screen !== "detail" && (
+        <TabBar
+          tabs={TABS}
+          active={screen}
+          onSelect={id => setScreen(id as Screen)}
+        />
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  actions: {
-    flexDirection: "row",
-    gap: 12,
-    justifyContent: "flex-end",
-  },
-  card: {
-    backgroundColor: "white",
-    borderRadius: 24,
-    gap: 12,
-    margin: 16,
-    padding: 16,
-  },
-  empty: {
-    color: "#64748b",
-    padding: 24,
-    textAlign: "center",
-  },
-  eyebrow: {
-    color: "#5570a7",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1,
-    textTransform: "uppercase",
+  root: {
+    flex: 1,
+    backgroundColor: theme.surface0,
   },
   header: {
-    padding: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 0.5,
+    borderBottomColor: theme.border,
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  logoBox: {
+    width: 26,
+    height: 26,
+    backgroundColor: theme.bgAccent,
+    borderWidth: 0.5,
+    borderColor: theme.borderAccent,
+    borderRadius: 7,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoIcon: {
+    fontSize: 13,
+    color: theme.textAccent,
+  },
+  appName: {
+    fontSize: 15,
+    fontWeight: "500",
+    color: theme.textPrimary,
+  },
+  syncDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: theme.fillSuccess,
+    marginLeft: 6,
+  },
+  statusText: {
+    fontSize: 11,
+    color: theme.textMuted,
+  },
+  composer: {
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 4,
+    borderBottomWidth: 0.5,
+    borderBottomColor: theme.border,
   },
   input: {
-    borderColor: "#cbd5e1",
+    borderWidth: 0.5,
+    borderColor: theme.borderStrong,
     borderRadius: 16,
-    borderWidth: 1,
     padding: 12,
+    fontSize: 13,
+    color: theme.textPrimary,
+    backgroundColor: theme.surface1,
+    minHeight: 80,
+    textAlignVertical: "top",
+    marginBottom: 8,
   },
-  item: {
-    backgroundColor: "white",
-    borderRadius: 18,
-    gap: 4,
-    padding: 16,
+  composerActions: {
+    flexDirection: "row",
+    gap: 8,
+    justifyContent: "flex-end",
+    marginBottom: 4,
   },
-  itemBody: {
-    color: "#334155",
-  },
-  itemTitle: {
-    color: "#172033",
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  kind: {
-    color: "#5570a7",
-    fontSize: 11,
-    fontWeight: "800",
-    textTransform: "uppercase",
-  },
-  label: {
-    color: "#334155",
-    fontWeight: "700",
-  },
-  list: {
-    gap: 12,
-    padding: 16,
-  },
-  meta: {
-    color: "#64748b",
-    fontSize: 12,
-  },
-  primaryButton: {
-    backgroundColor: "#275efe",
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  primaryButtonText: {
-    color: "white",
-    fontWeight: "800",
-  },
-  root: {
-    backgroundColor: "#f5f7fb",
-    flex: 1,
-  },
-  secondaryButton: {
-    alignItems: "center",
-    backgroundColor: "#e2e8f0",
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  secondaryButtonText: {
-    color: "#172033",
-    fontWeight: "800",
-  },
-  status: {
-    color: "#64748b",
-  },
-  downloadButton: {
-    backgroundColor: "#275efe",
-    borderRadius: 999,
+  composerBtn: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    alignSelf: "flex-start",
-    marginTop: 8,
+    borderRadius: 8,
+    borderWidth: 0.5,
+    borderColor: theme.borderAccent,
+    backgroundColor: theme.bgAccent,
   },
-  downloadButtonText: {
-    color: "white",
-    fontWeight: "800",
-    fontSize: 13,
+  composerBtnText: {
+    fontSize: 12,
+    color: theme.textAccent,
   },
-  textarea: {
-    minHeight: 96,
-    textAlignVertical: "top",
-  },
-  title: {
-    color: "#172033",
-    fontSize: 34,
-    fontWeight: "900",
+  content: {
+    flex: 1,
   },
 });

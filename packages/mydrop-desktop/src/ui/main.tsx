@@ -1,10 +1,4 @@
 import type { AlphaItem, Item } from "@mydrop/core";
-import {
-  deriveVaultKeyFromPassphrase,
-  generateVaultKey,
-  vaultKeyToHex,
-  bytesToHex,
-} from "@mydrop/core";
 import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { io } from "socket.io-client";
@@ -13,27 +7,8 @@ import "./styles.css";
 const env = import.meta.env as Readonly<Record<string, string | undefined>>;
 const apiBase = env["VITE_MYDROP_ALPHA_API"] ?? "http://127.0.0.1:4317";
 const sourceDevice = "desktop-alpha";
-const VAULT_STORAGE_KEY = "mydrop-vault";
 
-interface VaultState {
-  mode: "auto" | "passphrase";
-  passphraseSalt: string | null;
-  vaultKeyHex: string | null;
-}
-
-type Tab = "inbox" | "devices" | "vault";
-
-function readVaultState(): VaultState {
-  try {
-    const raw = localStorage.getItem(VAULT_STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as VaultState;
-  } catch { /* ignore */ }
-  return { mode: "auto", passphraseSalt: null, vaultKeyHex: null };
-}
-
-function writeVaultState(state: VaultState): void {
-  localStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(state));
-}
+type Page = "inbox" | "devices";
 
 interface DeviceEntry {
   id: string;
@@ -51,8 +26,11 @@ interface ConflictedCopyView {
   createdAt: number;
 }
 
+type ItemTypeLabel = "text" | "link" | "file" | "image" | "voice";
+const TYPE_ORDER: ItemTypeLabel[] = ["text", "link", "file", "image", "voice"];
+
 function App(): React.ReactElement {
-  const [tab, setTab] = useState<Tab>("inbox");
+  const [page, setPage] = useState<Page>("inbox");
   const [alphaItems, setAlphaItems] = useState<AlphaItem[]>([]);
   const [v1Items, setV1Items] = useState<Item[]>([]);
   const [text, setText] = useState("");
@@ -60,10 +38,8 @@ function App(): React.ReactElement {
   const [devices, setDevices] = useState<DeviceEntry[]>([]);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const [conflicts, setConflicts] = useState<Map<string, ConflictedCopyView[]>>(new Map());
-  const [vaultState, setVaultState] = useState<VaultState>(() => readVaultState());
-  const [vaultPassphrase, setVaultPassphrase] = useState("");
-  const [vaultConfirmPassphrase, setVaultConfirmPassphrase] = useState("");
-  const [vaultMessage, setVaultMessage] = useState<string | null>(null);
+  const [filterType, setFilterType] = useState<ItemTypeLabel | "all">("all");
+  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
 
   const socket = useMemo(() => io(apiBase, { transports: ["websocket"] }), []);
 
@@ -136,52 +112,6 @@ function App(): React.ReactElement {
     } catch { /* ignore */ }
   }
 
-  async function enableVaultPassphrase(): Promise<void> {
-    setVaultMessage(null);
-    if (vaultPassphrase.length < 4) {
-      setVaultMessage("Passphrase must be at least 4 characters");
-      return;
-    }
-    if (vaultPassphrase !== vaultConfirmPassphrase) {
-      setVaultMessage("Passphrases do not match");
-      return;
-    }
-
-    try {
-      const saltBytes = new Uint8Array(16);
-      crypto.getRandomValues(saltBytes);
-      await deriveVaultKeyFromPassphrase(vaultPassphrase, saltBytes);
-
-      const newState: VaultState = {
-        mode: "passphrase",
-        passphraseSalt: bytesToHex(saltBytes),
-        vaultKeyHex: null,
-      };
-      writeVaultState(newState);
-      setVaultState(newState);
-      setVaultMessage("Vault passphrase enabled");
-      setVaultPassphrase("");
-      setVaultConfirmPassphrase("");
-    } catch (err: unknown) {
-      setVaultMessage(err instanceof Error ? err.message : "Failed to enable vault");
-    }
-  }
-
-  function disableVaultPassphrase(): void {
-    const newState: VaultState = {
-      mode: "auto",
-      passphraseSalt: null,
-      vaultKeyHex: vaultState.vaultKeyHex ?? null,
-    };
-    if (!newState.vaultKeyHex) {
-      const vk = generateVaultKey();
-      newState.vaultKeyHex = vaultKeyToHex(vk);
-    }
-    writeVaultState(newState);
-    setVaultState(newState);
-    setVaultMessage("Vault passphrase disabled (using auto-generated key)");
-  }
-
   async function shareText(): Promise<void> {
     const body = text.trim();
     if (body.length === 0) return;
@@ -201,40 +131,101 @@ function App(): React.ReactElement {
     });
   }
 
-  function isFileItem(item: Item): boolean {
-    return item.type === "file" || item.type === "image";
-  }
-
   async function showConflicts(item: Item): Promise<void> {
     const copies = await checkConflicts(item.id);
     if (!copies || copies.length === 0) return;
     setConflicts(prev => new Map(prev).set(item.id, copies));
   }
 
-  return (
-    <main className="shell">
-      <section className="hero">
-        <div>
-          <p className="eyebrow">MyDrop</p>
-          <h1>{tab === "inbox" ? "Inbox" : tab === "devices" ? "Devices" : "Vault"}</h1>
-          <p>{status} · {v1Items.length + alphaItems.length} items</p>
-        </div>
-        <div className="actions">
-          <button type="button" className={tab === "inbox" ? "active" : ""} onClick={() => setTab("inbox")}>
-            Inbox
-          </button>
-          <button type="button" className={tab === "devices" ? "active" : ""} onClick={() => setTab("devices")}>
-            Devices ({devices.filter(d => onlineIds.has(d.id)).length}/{devices.length})
-          </button>
-          <button type="button" className={tab === "vault" ? "active" : ""} onClick={() => setTab("vault")}>
-            Vault
-          </button>
-        </div>
-      </section>
+  const allItems: Item[] = [...v1Items, ...alphaItems.map(a => ({
+    id: a.id,
+    type: a.kind,
+    title: a.title ?? "",
+    content: a.body ?? a.fileName ?? null,
+    fileId: null,
+    createdAt: a.createdAt,
+    createdBy: a.sourceDevice,
+    updatedAt: a.createdAt,
+    versionVector: {},
+    deleted: false,
+  }))];
 
-      {tab === "inbox" ? (
-        <>
-          <section className="composer">
+  const filteredItems = filterType === "all"
+    ? allItems
+    : allItems.filter(i => i.type === filterType);
+
+  function handleSelectItem(item: Item): void {
+    setSelectedItem(item);
+  }
+
+  function formatDate(ts: number): string {
+    const d = new Date(ts);
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    if (diff < 60000) return "Just now";
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return d.toLocaleDateString();
+  }
+
+  return (
+    <div className={`shell${selectedItem ? " hasDetail" : ""}`}>
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="sidebarLogo">
+          <div className="logoIcon">📥</div>
+          <span>MyDrop</span>
+        </div>
+        <nav className="sidebarNav">
+          <button
+            type="button"
+            className={`navBtn${page === "inbox" ? " active" : ""}`}
+            onClick={() => { setPage("inbox"); setSelectedItem(null); }}
+          >
+            <span className="navIcon">📥</span>
+            <span>Inbox</span>
+          </button>
+          <button
+            type="button"
+            className={`navBtn${page === "devices" ? " active" : ""}`}
+            onClick={() => setPage("devices")}
+          >
+            <span className="navIcon">📱</span>
+            <span>Devices</span>
+            <span className="navBadge">{devices.filter(d => onlineIds.has(d.id)).length}/{devices.length}</span>
+          </button>
+        </nav>
+        <div className="sidebarFooter">
+          <div className={`statusDot ${status === "Connected" ? "online" : "offline"}`} />
+          <span className="statusLabel">{status}</span>
+        </div>
+      </aside>
+
+      {/* Inbox panel */}
+      {page === "inbox" && (
+        <div className="inboxPanel">
+          {/* Header */}
+          <div className="panelHeader">
+            <h1 className="panelTitle">Inbox</h1>
+            <span className="panelCount">{allItems.length} items</span>
+          </div>
+
+          {/* Filter pills */}
+          <div className="filterRow">
+            {(["all", ...TYPE_ORDER] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                className={`filterPill${filterType === t ? " active" : ""}`}
+                onClick={() => setFilterType(t)}
+              >
+                {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          {/* Composer */}
+          <div className="composer">
             <textarea
               value={text}
               onChange={event => setText(event.target.value)}
@@ -252,150 +243,176 @@ function App(): React.ReactElement {
                   }}
                 />
               </label>
-              <button type="button" onClick={() => void shareText()}>Share text</button>
+              <button type="button" className="btnPrimary" onClick={() => void shareText()}>Share text</button>
             </div>
-          </section>
-
-          <section className="inbox">
-            {v1Items.length === 0 && alphaItems.length === 0 ? (
-              <p className="empty">No items yet. Drop something in.</p>
-            ) : null}
-            {v1Items.map(item => (
-              <ConflictAwareItem
-                key={item.id}
-                item={item}
-                conflicts={conflicts.get(item.id)}
-                onShowConflicts={() => void showConflicts(item)}
-                onResolve={(copyId, keepBoth) => void resolveConflict(item.id, copyId, keepBoth)}
-                renderContent={() => (
-                  <>
-                    <span className="kind">{item.type}</span>
-                    <h2>{item.title}</h2>
-                    <p>{isFileItem(item) ? item.title : item.content}</p>
-                    <small>{item.createdBy} · {new Date(item.createdAt).toLocaleString()}</small>
-                    {isFileItem(item) && item.content?.startsWith("data:") ? (
-                      <a href={item.content} download={item.title ?? "mydrop-file"}>Download</a>
-                    ) : null}
-                  </>
-                )}
-              />
-            ))}
-            {alphaItems.map(item => (
-              <article className="item" key={item.id}>
-                <div>
-                  <span className="kind">{item.kind}</span>
-                  <h2>{item.title}</h2>
-                  <p>{item.body ?? item.fileName}</p>
-                  <small>{item.sourceDevice} · {new Date(item.createdAt).toLocaleString()}</small>
-                </div>
-                {item.fileDataUrl ? (
-                  <a href={item.fileDataUrl} download={item.fileName ?? "mydrop-file"}>Download</a>
-                ) : null}
-              </article>
-            ))}
-          </section>
-        </>
-      ) : tab === "devices" ? (
-        <section className="devices">
-          {devices.length === 0 ? <p className="empty">No paired devices.</p> : null}
-          {devices.map(d => (
-            <article className="item" key={d.id}>
-              <div>
-                <span className={`statusDot ${onlineIds.has(d.id) ? "online" : "offline"}`} />
-                <h2>{d.name}</h2>
-                <p className={onlineIds.has(d.id) ? "statusOnline" : "statusOffline"}>
-                  {onlineIds.has(d.id) ? "Online" : "Offline"}
-                </p>
-                <small>
-                  {d.status} · {d.trustedAt ? `trusted ${new Date(d.trustedAt).toLocaleDateString()}` : ""}
-                  {d.lastSeen ? ` · last seen ${new Date(d.lastSeen).toLocaleString()}` : ""}
-                </small>
-              </div>
-            </article>
-          ))}
-        </section>
-      ) : (
-        <section className="vault">
-          <div className="composer">
-            <h2>Vault Settings</h2>
-            <p>
-              Status: <strong>{vaultState.mode === "passphrase" ? "Passphrase-protected" : "Auto-generated key"}</strong>
-            </p>
-            {vaultMessage ? <p className="vaultMessage">{vaultMessage}</p> : null}
-
-            {vaultState.mode === "passphrase" ? (
-              <div className="vaultActions">
-                <p>Your vault is secured with a passphrase. To switch to an auto-generated key:</p>
-                <button type="button" onClick={() => void disableVaultPassphrase()}>
-                  Disable passphrase
-                </button>
-              </div>
-            ) : (
-              <div className="vaultActions">
-                <p>Set a passphrase to encrypt your local vault:</p>
-                <input
-                  type="password"
-                  placeholder="New passphrase (min 4 chars)"
-                  value={vaultPassphrase}
-                  onChange={e => setVaultPassphrase(e.target.value)}
-                />
-                <input
-                  type="password"
-                  placeholder="Confirm passphrase"
-                  value={vaultConfirmPassphrase}
-                  onChange={e => setVaultConfirmPassphrase(e.target.value)}
-                />
-                <button type="button" onClick={() => void enableVaultPassphrase()}>
-                  Enable Passphrase
-                </button>
-              </div>
-            )}
           </div>
-        </section>
+
+          {/* Item list */}
+          <div className="itemList">
+            {filteredItems.length === 0 ? (
+              <p className="emptyState">No items yet. Drop something in.</p>
+            ) : null}
+            {filteredItems.map(item => (
+              <div
+                key={item.id}
+                className={`itemRow${selectedItem?.id === item.id ? " selected" : ""}${conflicts.has(item.id) ? " conflicted" : ""}`}
+                onClick={() => handleSelectItem(item)}
+              >
+                <div className="itemBadgeWrap">
+                  <span className={`itemBadge ${item.type}`}>
+                    {item.type === "text" ? "T" : item.type === "link" ? "L" : item.type === "file" ? "F" : item.type === "image" ? "I" : item.type === "voice" ? "V" : "?"}
+                  </span>
+                </div>
+                <div className="itemBody">
+                  <div className="itemTitleRow">
+                    <span className="itemTitle">{item.title || "(untitled)"}</span>
+                    {conflicts.has(item.id) && <span className="conflictTag">Conflict</span>}
+                  </div>
+                  <div className="itemMeta">
+                    <span className="itemType">{item.type}</span>
+                    <span className="itemDot">·</span>
+                    <span className="itemTime">{formatDate(item.createdAt)}</span>
+                    <span className="itemDot">·</span>
+                    <span className="itemFrom">{item.createdBy}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
-    </main>
+
+      {/* Detail panel */}
+      {page === "inbox" && selectedItem && (
+        <DetailPanel
+          item={selectedItem}
+          conflicts={conflicts.get(selectedItem.id)}
+          onResolve={(copyId, keepBoth) => void resolveConflict(selectedItem.id, copyId, keepBoth)}
+          onBack={() => setSelectedItem(null)}
+          onShowConflicts={() => void showConflicts(selectedItem)}
+        />
+      )}
+
+      {/* Devices page */}
+      {page === "devices" && (
+        <div className="inboxPanel">
+          <div className="panelHeader">
+            <h1 className="panelTitle">Devices</h1>
+            <span className="panelCount">{devices.length} paired</span>
+          </div>
+          <div className="deviceGrid">
+            {devices.length === 0 ? <p className="emptyState">No paired devices.</p> : null}
+            {devices.map(d => (
+              <div key={d.id} className="deviceCard">
+                <div className="deviceCardHeader">
+                  <span className={`statusDot ${onlineIds.has(d.id) ? "online" : "offline"}`} />
+                  <span className="deviceName">{d.name}</span>
+                </div>
+                <div className="deviceStats">
+                  <div className="stat">
+                    <span className="statValue">{onlineIds.has(d.id) ? "Online" : "Offline"}</span>
+                    <span className="statLabel">Status</span>
+                  </div>
+                  <div className="stat">
+                    <span className="statValue">{d.status}</span>
+                    <span className="statLabel">Version</span>
+                  </div>
+                  <div className="stat">
+                    <span className="statValue">{d.trustedAt ? new Date(d.trustedAt).toLocaleDateString() : "—"}</span>
+                    <span className="statLabel">Trusted</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div className="deviceCard addDevice">
+              <span className="addDeviceIcon">+</span>
+              <span>Pair new device</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-function ConflictAwareItem(props: {
+function DetailPanel(props: {
   item: Item;
   conflicts: ConflictedCopyView[] | undefined;
-  onShowConflicts: () => void;
   onResolve: (copyId: string, keepBoth: boolean) => void;
-  renderContent: () => React.ReactNode;
+  onBack: () => void;
+  onShowConflicts: () => void;
 }): React.ReactElement {
-  const [expanded, setExpanded] = useState(false);
+  const [resolved, setResolved] = useState(false);
+
+  function handleResolve(copyId: string, keepBoth: boolean): void {
+    props.onResolve(copyId, keepBoth);
+    setResolved(true);
+  }
 
   return (
-    <article className={`item ${props.conflicts ? "conflicted" : ""}`}>
-      <div>
-        {props.conflicts ? (
-          <span className="conflictBadge">⚠ {props.conflicts.length} conflict{props.conflicts.length > 1 ? "s" : ""}</span>
-        ) : null}
-        {props.renderContent()}
-      </div>
-      {props.conflicts ? (
-        <div>
-          <button type="button" onClick={() => { props.onShowConflicts(); setExpanded(!expanded); }}>
-            {expanded ? "Hide" : "Resolve"}
-          </button>
-          {expanded ? (
-            <div className="conflictSheet">
-              {props.conflicts.map(c => (
-                <div key={c.id} className="conflictCopy">
-                  <p>{c.content ?? "(file)"}</p>
-                  <small>from {c.losingDevice}</small>
-                  <div className="actions">
-                    <button type="button" onClick={() => props.onResolve(c.id, false)}>Accept</button>
-                    <button type="button" onClick={() => props.onResolve(c.id, true)}>Keep both</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
+    <div className="detailPanel">
+      <button type="button" className="backBtn" onClick={props.onBack}>← Back</button>
+
+      <div className="detailIconArea">
+        <div className="detailIcon">
+          {props.item.type === "text" ? "T" : props.item.type === "link" ? "L" : props.item.type === "file" ? "F" : props.item.type === "image" ? "I" : "V"}
         </div>
+      </div>
+
+      <div className="detailMeta">
+        <div className="metaGrid">
+          <div className="metaItem">
+            <span className="metaLabel">Title</span>
+            <span className="metaValue">{props.item.title}</span>
+          </div>
+          <div className="metaItem">
+            <span className="metaLabel">Type</span>
+            <span className="metaValue">{props.item.type}</span>
+          </div>
+          <div className="metaItem">
+            <span className="metaLabel">From</span>
+            <span className="metaValue">{props.item.createdBy}</span>
+          </div>
+          <div className="metaItem">
+            <span className="metaLabel">Time</span>
+            <span className="metaValue">{new Date(props.item.createdAt).toLocaleString()}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="detailContent">
+        <p>{props.item.content || "(no content)"}</p>
+      </div>
+
+      <div className="detailActions">
+        <button type="button" className="btnPrimary">Download</button>
+        <button type="button" className="btnSecondary">Share</button>
+        <button type="button" className="btnDanger">Delete</button>
+      </div>
+
+      {props.conflicts && !resolved ? (
+        <div className="conflictSection">
+          <div className="conflictBanner">⚠ Conflict — {props.conflicts.length} conflicting versions</div>
+          <div className="conflictCards">
+            {props.conflicts.map(c => (
+              <div key={c.id} className="conflictCard">
+                <div className="conflictCardHeader">
+                  <span className="conflictVersion">v{c.id}</span>
+                  <span className="conflictDevice">{c.losingDevice}</span>
+                </div>
+                <p className="conflictContent">{c.content || "(file)"}</p>
+                <div className="conflictCardActions">
+                  <button type="button" className="btnSmall" onClick={() => handleResolve(c.id, false)}>Keep this</button>
+                  <button type="button" className="btnSmallSecondary" onClick={() => handleResolve(c.id, true)}>Keep both</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : props.conflicts && resolved ? (
+        <div className="resolvedBanner">✓ Resolved</div>
       ) : null}
-    </article>
+    </div>
   );
 }
 
