@@ -20,6 +20,7 @@ import { TabBar, type TabItem } from "./v1/TabBar.js";
 import { theme } from "./v1/theme.js";
 import { SyncPeerClient, type SyncPeerStatus } from "./sync/sync-peer-client.js";
 import { MdnsBrowser } from "./sync/mdns-browser.js";
+import { ShareIntentHandler } from "./native/ShareIntentHandler.js";
 
 type AppPhase = "vault" | "main";
 type Screen =
@@ -50,6 +51,7 @@ export function MyDropAlphaApp(): React.ReactElement {
   const [syncStatus, setSyncStatus] = useState<SyncPeerStatus>("disconnected");
   const syncPeer = useRef<SyncPeerClient | null>(null);
   const mdnsRef = useRef<MdnsBrowser | null>(null);
+  const shareHandlerRef = useRef<ShareIntentHandler | null>(null);
 
   const socket = useMemo(
     () => io(apiBase, { autoConnect: false, transports: ["websocket"] }),
@@ -61,6 +63,14 @@ export function MyDropAlphaApp(): React.ReactElement {
     if (result.needsPassphrase) return;
     setStore(result.store);
     setPhase("main");
+
+    const handler = new ShareIntentHandler(result.store);
+    handler.subscribe(() => {
+      void result.store.listItems().then(setItems);
+    });
+    handler.startListening();
+    shareHandlerRef.current = handler;
+
     const peer = new SyncPeerClient(result.store.syncEngine, {
       onStatusChange: setSyncStatus,
       onSyncComplete: () => {
@@ -84,6 +94,7 @@ export function MyDropAlphaApp(): React.ReactElement {
     mdnsRef.current = mdns;
     return () => {
       mdns.stop();
+      shareHandlerRef.current?.stopListening();
     };
   }, [phase, store]);
 
@@ -131,6 +142,14 @@ export function MyDropAlphaApp(): React.ReactElement {
             if (result.needsPassphrase) return;
             setStore(result.store);
             setPhase("main");
+
+            const handler = new ShareIntentHandler(result.store);
+            handler.subscribe(() => {
+              void result.store.listItems().then(setItems);
+            });
+            handler.startListening();
+            shareHandlerRef.current = handler;
+
             const peer = new SyncPeerClient(result.store.syncEngine, {
               onStatusChange: setSyncStatus,
               onSyncComplete: () => {

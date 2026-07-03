@@ -126,6 +126,26 @@ body {
   color: var(--textMuted);
 }
 
+.shareShortcut {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--borderAccent);
+  background: var(--bgAccent);
+  color: var(--textAccent);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shareShortcut:hover {
+  background: var(--borderAccent);
+}
+
 .statusDot {
   width: 8px;
   height: 8px;

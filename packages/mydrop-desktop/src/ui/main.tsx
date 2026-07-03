@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { io } from "socket.io-client";
 import "./styles.css";
+import type { QuickShareItem } from "./QuickShare.js";
+import { useQuickShare } from "./QuickShare.js";
 
 const env = import.meta.env as Readonly<Record<string, string | undefined>>;
 const apiBase = env["VITE_MYDROP_ALPHA_API"] ?? "http://127.0.0.1:4317";
@@ -42,6 +44,8 @@ function App(): React.ReactElement {
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
 
   const socket = useMemo(() => io(apiBase, { transports: ["websocket"] }), []);
+
+  const quickShare = useQuickShare(shareText, shareFile);
 
   useEffect(() => {
     void refreshItems();
@@ -119,14 +123,20 @@ function App(): React.ReactElement {
     setText("");
   }
 
-  async function shareFile(file: File): Promise<void> {
-    const fileDataUrl = await readFileAsDataUrl(file);
+  async function shareFile(file: QuickShareItem | File): Promise<void> {
+    const isQuick = "dataUrl" in file && "fileName" in file;
+    const fileName = isQuick ? (file as QuickShareItem).fileName : (file as File).name;
+    const fileSize = isQuick ? (file as QuickShareItem).fileSize : (file as File).size;
+    const mimeType = isQuick ? (file as QuickShareItem).mimeType : (file as File).type || null;
+    const fileDataUrl = isQuick
+      ? (file as QuickShareItem).dataUrl
+      : await readFileAsDataUrl(file as File);
     await postJson("/items/file", {
-      fileName: file.name,
-      fileUri: `desktop://${file.name}`,
+      fileName,
+      fileUri: `desktop://${fileName}`,
       fileDataUrl,
-      fileSize: file.size,
-      mimeType: file.type || null,
+      fileSize,
+      mimeType,
       sourceDevice,
     });
   }
@@ -198,6 +208,7 @@ function App(): React.ReactElement {
         <div className="sidebarFooter">
           <div className={`statusDot ${status === "Connected" ? "online" : "offline"}`} />
           <span className="statusLabel">{status}</span>
+          <button type="button" className="shareShortcut" onClick={quickShare.show} title="Quick share (Ctrl+Shift+M)">+</button>
         </div>
       </aside>
 
@@ -292,6 +303,8 @@ function App(): React.ReactElement {
           onShowConflicts={() => void showConflicts(selectedItem)}
         />
       )}
+
+      {quickShare.popup}
 
       {/* Devices page */}
       {page === "devices" && (
