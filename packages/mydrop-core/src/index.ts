@@ -12,4 +12,6 @@ export * from "./sync/hash.js";
 export * from "./sync/file-store.js";
 export * from "./crypto/identity.js";
 export * from "./crypto/pairing.js";
+export * from "./events/event-log.js";
+export * from "./events/tombstone-gc.js";
 export * from "./sync/vault.js";

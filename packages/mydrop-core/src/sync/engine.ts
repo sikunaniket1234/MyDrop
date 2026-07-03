@@ -1,4 +1,6 @@
 import type { DatabaseClient, SqlPrimitive } from "../db/client.js";
+import { EventLog } from "../events/event-log.js";
+import { TombstoneGc } from "../events/tombstone-gc.js";
 import { hlcNow, hlcCompare } from "./hlc.js";
 import type {
   ConflictedCopy,
@@ -6,7 +8,6 @@ import type {
   Item,
   ItemType,
   SyncEvent,
-  SyncEventType,
   VersionVector,
 } from "./types.js";
 import {
@@ -26,19 +27,6 @@ export interface ApplyResult {
   readonly applied: number;
   readonly conflicted: number;
   readonly skipped: number;
-}
-
-interface SyncEventRow {
-  readonly [key: string]: SqlPrimitive;
-  readonly id: string;
-  readonly item_id: string;
-  readonly event_type: SyncEventType;
-  readonly payload: string | null;
-  readonly item_version_vector: string;
-  readonly hlc_physical: number;
-  readonly hlc_counter: number;
-  readonly device_id: string;
-  readonly created_at: number;
 }
 
 interface ItemRow {
@@ -67,16 +55,18 @@ interface ConflictRow {
   readonly created_at: number;
 }
 
-const TOMBSTONE_GC_DAYS = 30;
-
 export class SyncEngine {
   readonly #db: DatabaseClient;
   readonly #deviceId: string;
+  readonly #eventLog: EventLog;
+  readonly #tombstones: TombstoneGc;
   #lastHlc: HLC | null = null;
 
   public constructor(db: DatabaseClient, deviceId: string) {
     this.#db = db;
     this.#deviceId = deviceId;
+    this.#eventLog = new EventLog(db);
+    this.#tombstones = new TombstoneGc(db);
   }
 
   public get deviceId(): string {
@@ -92,11 +82,7 @@ export class SyncEngine {
     await this.#db.exec("BEGIN IMMEDIATE");
 
     try {
-      await this.#db.exec(
-        `INSERT INTO sync_events (id, item_id, event_type, payload, item_version_vector, hlc_physical, hlc_counter, device_id, created_at)
-         VALUES (?, ?, 'create', ?, ?, ?, ?, ?, ?)`,
-        [generateId(), id, JSON.stringify(input), JSON.stringify(vv), hlc.physical, hlc.counter, this.#deviceId, now],
-      );
+      await this.#eventLog.append(id, "create", input as unknown as Record<string, unknown>, vv, hlc, this.#deviceId, now);
 
       const item: Item = {
         id,
@@ -140,11 +126,7 @@ export class SyncEngine {
     await this.#db.exec("BEGIN IMMEDIATE");
 
     try {
-      await this.#db.exec(
-        `INSERT INTO sync_events (id, item_id, event_type, payload, item_version_vector, hlc_physical, hlc_counter, device_id, created_at)
-         VALUES (?, ?, 'update', ?, ?, ?, ?, ?, ?)`,
-        [generateId(), id, JSON.stringify(changes), JSON.stringify(newVv), hlc.physical, hlc.counter, this.#deviceId, now],
-      );
+      await this.#eventLog.append(id, "update", changes, newVv, hlc, this.#deviceId, now);
 
       const item: Item = {
         ...existing,
@@ -169,22 +151,12 @@ export class SyncEngine {
 
     const now = Date.now();
     const hlc = this.#nextHlc();
-    const tombstoneExpiry = now + TOMBSTONE_GC_DAYS * 24 * 60 * 60 * 1000;
 
     await this.#db.exec("BEGIN IMMEDIATE");
 
     try {
-      await this.#db.exec(
-        `INSERT INTO sync_events (id, item_id, event_type, payload, item_version_vector, hlc_physical, hlc_counter, device_id, created_at)
-         VALUES (?, ?, 'delete', NULL, ?, ?, ?, ?, ?)`,
-        [generateId(), id, JSON.stringify(existing.versionVector), hlc.physical, hlc.counter, this.#deviceId, now],
-      );
-
-      await this.#db.exec(
-        `INSERT OR REPLACE INTO tombstones (item_id, hlc_physical, hlc_counter, device_id, expires_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [id, hlc.physical, hlc.counter, this.#deviceId, tombstoneExpiry],
-      );
+      await this.#eventLog.append(id, "delete", null, existing.versionVector, hlc, this.#deviceId, now);
+      await this.#tombstones.create(id, hlc, this.#deviceId, now);
 
       await this.#db.exec(
         `UPDATE items SET deleted = 1, updated_at = ?, version_vector = ? WHERE id = ?`,
@@ -284,58 +256,19 @@ export class SyncEngine {
   }
 
   async getEventsSince(cursor: HLC | null): Promise<SyncEvent[]> {
-    if (cursor === null) {
-      const rows = await this.#db.query<SyncEventRow>(
-        `SELECT id, item_id, event_type, payload, item_version_vector, hlc_physical, hlc_counter, device_id, created_at
-         FROM sync_events
-         ORDER BY hlc_physical ASC, hlc_counter ASC`,
-      );
-      return rows.map(rowToSyncEvent);
-    }
-
-    const rows = await this.#db.query<SyncEventRow>(
-      `SELECT id, item_id, event_type, payload, item_version_vector, hlc_physical, hlc_counter, device_id, created_at
-       FROM sync_events
-       WHERE (hlc_physical > ?) OR (hlc_physical = ? AND hlc_counter > ?)
-       ORDER BY hlc_physical ASC, hlc_counter ASC`,
-      [cursor.physical, cursor.physical, cursor.counter],
-    );
-    return rows.map(rowToSyncEvent);
+    return this.#eventLog.getEventsSince(cursor);
   }
 
   async getSyncCursor(peerDeviceId: string): Promise<HLC | null> {
-    const rows = await this.#db.query<{
-      readonly [key: string]: SqlPrimitive;
-      readonly last_hlc_physical: number | null;
-      readonly last_hlc_counter: number | null;
-    }>(
-      `SELECT last_hlc_physical, last_hlc_counter FROM sync_cursors WHERE peer_device_id = ?`,
-      [peerDeviceId],
-    );
-    const row = rows[0];
-    if (!row || row.last_hlc_physical === null) return null;
-    return {
-      physical: row.last_hlc_physical,
-      counter: row.last_hlc_counter ?? 0,
-      deviceId: peerDeviceId,
-    };
+    return this.#eventLog.getSyncCursor(peerDeviceId);
   }
 
   async setSyncCursor(peerDeviceId: string, hlc: HLC): Promise<void> {
-    await this.#db.exec(
-      `INSERT OR REPLACE INTO sync_cursors (peer_device_id, last_hlc_physical, last_hlc_counter)
-       VALUES (?, ?, ?)`,
-      [peerDeviceId, hlc.physical, hlc.counter],
-    );
+    await this.#eventLog.setSyncCursor(peerDeviceId, hlc);
   }
 
   async gcTombstones(): Promise<number> {
-    const now = Date.now();
-    const result = await this.#db.exec(
-      `DELETE FROM tombstones WHERE expires_at < ?`,
-      [now],
-    );
-    return result.rowsAffected;
+    return this.#tombstones.runSweep();
   }
 
   #nextHlc(): HLC {
@@ -379,13 +312,9 @@ export class SyncEngine {
     const existing = await this.#findItem(event.itemId);
     const remoteVv = event.itemVersionVector;
 
-    // Check tombstone
     if (event.eventType !== "delete") {
-      const tombstoneRows = await this.#db.query<{ item_id: string }>(
-        `SELECT item_id FROM tombstones WHERE item_id = ?`,
-        [event.itemId],
-      );
-      if (tombstoneRows.length > 0) return "skipped";
+      const exists = await this.#tombstones.exists(event.itemId);
+      if (exists) return "skipped";
     }
 
     if (existing) {
@@ -454,17 +383,7 @@ export class SyncEngine {
               [event.createdAt, event.itemId],
             );
           }
-          await this.#db.exec(
-            `INSERT OR REPLACE INTO tombstones (item_id, hlc_physical, hlc_counter, device_id, expires_at)
-             VALUES (?, ?, ?, ?, ?)`,
-            [
-              event.itemId,
-              event.hlc.physical,
-              event.hlc.counter,
-              event.deviceId,
-              event.createdAt + TOMBSTONE_GC_DAYS * 24 * 60 * 60 * 1000,
-            ],
-          );
+          await this.#tombstones.create(event.itemId, event.hlc, event.deviceId, event.createdAt);
           break;
         }
         case "rename": {
@@ -539,26 +458,17 @@ export class SyncEngine {
   }
 
   async #saveEvent(event: SyncEvent): Promise<void> {
-    const rows = await this.#db.query<{ id: string }>(
-      `SELECT id FROM sync_events WHERE id = ?`,
-      [event.id],
-    );
-    if (rows.length > 0) return;
+    const alreadyExists = await this.#eventLog.exists(event.id);
+    if (alreadyExists) return;
 
-    await this.#db.exec(
-      `INSERT INTO sync_events (id, item_id, event_type, payload, item_version_vector, hlc_physical, hlc_counter, device_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        event.id,
-        event.itemId,
-        event.eventType,
-        event.payload ? JSON.stringify(event.payload) : null,
-        JSON.stringify(event.itemVersionVector),
-        event.hlc.physical,
-        event.hlc.counter,
-        event.deviceId,
-        event.createdAt,
-      ],
+    await this.#eventLog.append(
+      event.itemId,
+      event.eventType,
+      event.payload,
+      event.itemVersionVector,
+      event.hlc,
+      event.deviceId,
+      event.createdAt,
     );
   }
 }
@@ -584,23 +494,6 @@ function rowToItem(row: ItemRow): Item {
     createdBy: row.created_by,
     versionVector: JSON.parse(row.version_vector) as VersionVector,
     deleted: row.deleted === 1,
-  };
-}
-
-function rowToSyncEvent(row: SyncEventRow): SyncEvent {
-  return {
-    id: row.id,
-    itemId: row.item_id,
-    eventType: row.event_type,
-    payload: row.payload ? (JSON.parse(row.payload) as Record<string, unknown>) : null,
-    itemVersionVector: JSON.parse(row.item_version_vector) as VersionVector,
-    hlc: {
-      physical: row.hlc_physical,
-      counter: row.hlc_counter,
-      deviceId: row.device_id,
-    },
-    deviceId: row.device_id,
-    createdAt: row.created_at,
   };
 }
 
