@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MyDrop Alpha",
+  "version": "0.0.0",
+  "identifier": "dev.mydrop.alpha",
+  "build": {
+    "beforeDevCommand": "pnpm dev:api",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MyDrop Alpha",
+        "width": 960,
+        "height": 720
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all"
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    },
+    "global-shortcut": {
+      "shortcuts": {
+        "Ctrl+Shift+M": {
+          "action": "toggle"
+        }
+      }
+    },
+    "clipboard-manager": {
+      "all": true
+    },
+    "notification": {
+      "all": true
+    }
+  }
+}

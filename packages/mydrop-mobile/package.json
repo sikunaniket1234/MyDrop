@@ -1,0 +1,32 @@
+{
+  "name": "@mydrop/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "react-native start",
+    "android": "react-native run-android",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --max-warnings 0",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@mydrop/core": "workspace:*",
+    "@op-engineering/op-sqlite": "^17.0.0",
+    "react": "^19.2.7",
+    "react-native": "^0.86.0",
+    "react-native-fs": "^2.20.0",
+    "react-native-image-picker": "^8.2.1",
+    "react-native-zeroconf": "^0.14.0",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@react-native-community/cli": "^20.2.0",
+    "@react-native-community/cli-platform-android": "^20.2.0",
+    "@react-native/codegen": "^0.86.0",
+    "@react-native/gradle-plugin": "^0.86.0",
+    "@react-native/metro-config": "^0.86.0",
+    "@types/react": "^19.2.17"
+  }
+}

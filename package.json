@@ -1,0 +1,37 @@
+{
+  "name": "mydrop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-first, peer-to-peer synchronization for a single user's devices.",
+  "packageManager": "pnpm@10.12.4",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "boundaries": "depcruise --config dependency-cruiser.config.mjs packages",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "format": "prettier --write \"*.{json,md,mjs,yaml}\" \"packages/**/*.{json,ts}\" \".github/**/*.yml\"",
+    "format:check": "prettier --check \"*.{json,md,mjs,yaml}\" \"packages/**/*.{json,ts}\" \".github/**/*.yml\"",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.29.0",
+    "dependency-cruiser": "^16.10.4",
+    "eslint": "^9.29.0",
+    "globals": "^16.2.0",
+    "pnpm": "10.12.4",
+    "prettier": "^3.5.3",
+    "turbo": "^2.5.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.34.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
+  }
+}

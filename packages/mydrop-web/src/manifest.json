@@ -1,0 +1,10 @@
+{
+  "name": "MyDrop",
+  "short_name": "MyDrop",
+  "description": "Personal synced inbox — thin web client",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#275efe",
+  "icons": []
+}

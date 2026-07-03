@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MyDrop</title>
+  <link rel="manifest" href="manifest.json" />
+  <style>
+    :root { color: #172033; background: #f5f7fb; font-family: system-ui, sans-serif; }
+    body { margin: 0; }
+    .shell { display: grid; gap: 1rem; margin: 0 auto; max-width: 640px; padding: 2rem; }
+    .card { background: white; border: 1px solid #e2e8f0; border-radius: 24px; padding: 1.5rem; }
+    .hero { display: flex; justify-content: space-between; align-items: center; }
+    h1 { margin: 0; font-size: 1.5rem; }
+    .status { color: #64748b; font-size: 0.85rem; }
+    input, textarea { border: 1px solid #cbd5e1; border-radius: 16px; font: inherit; padding: 0.75rem; width: 100%; box-sizing: border-box; }
+    textarea { min-height: 80px; resize: vertical; }
+    .actions { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 0.75rem; }
+    button { border: 0; border-radius: 999px; background: #275efe; color: white; cursor: pointer; font-weight: 700; padding: 0.6rem 1rem; }
+    button.secondary { background: #e2e8f0; color: #172033; }
+    .item { background: white; border: 1px solid #e2e8f0; border-radius: 18px; padding: 1rem; display: flex; justify-content: space-between; align-items: center; }
+    .item h2 { margin: 0; font-size: 1rem; }
+    .item p { margin: 0.25rem 0; color: #334155; font-size: 0.9rem; }
+    .item small { color: #64748b; font-size: 0.78rem; }
+    .kind { color: #5570a7; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+    .empty { color: #64748b; text-align: center; padding: 2rem; }
+    .urlBar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .urlBar input { flex: 1; }
+  </style>
+</head>
+<body>
+  <div class="shell" id="app">
+    <div class="card hero">
+      <div>
+        <p class="kind">MyDrop · Web</p>
+        <h1>Inbox</h1>
+        <p class="status" id="status">Disconnected</p>
+      </div>
+      <button id="refreshBtn">Refresh</button>
+    </div>
+
+    <div class="card urlBar">
+      <input type="text" id="nodeUrl" placeholder="http://192.168.1.x:4317" value="http://localhost:4317" />
+      <button id="connectBtn">Connect</button>
+    </div>
+
+    <div class="card">
+      <textarea id="textInput" placeholder="Share text..."></textarea>
+      <div class="actions">
+        <button id="shareBtn">Share text</button>
+      </div>
+    </div>
+
+    <div id="items"></div>
+  </div>
+
+  <script type="module" src="app.ts"></script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+# Dependencies and build output
+node_modules/
+dist/
+.turbo/
+.tmp/
+coverage/
+*.tsbuildinfo
+
+# Android native build output
+*.keystore
+**/.gradle/
+**/build/
+**/.cxx/
+**/local.properties
+**/android/app/src/main/assets/index.android.bundle
+**/android/app/src/main/assets/index.android.bundle
+**/android/app/src/main/assets/index.android.bundle.*
+
+# iOS native build output
+packages/mydrop-mobile/ios/Pods/
+packages/mydrop-mobile/ios/build/
+
+# Rust/Tauri build output
+target/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+**/local.properties
+
+# Logs
+*.log
+*.err
+pnpm-debug.log*
+
+# Session notes
+history.md
+next.md
+
+# Generated HTML
+MyDrop_UI.html
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
