@@ -22,5 +22,8 @@
   },
   "devDependencies": {
     "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.2.0"
   }
 }

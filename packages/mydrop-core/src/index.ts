@@ -10,6 +10,6 @@ export * from "./sync/engine.js";
 export * from "./sync/protocol.js";
 export * from "./sync/hash.js";
 export * from "./sync/file-store.js";
-export * from "./sync/crypto.js";
-export * from "./sync/pairing.js";
+export * from "./crypto/identity.js";
+export * from "./crypto/pairing.js";
 export * from "./sync/vault.js";

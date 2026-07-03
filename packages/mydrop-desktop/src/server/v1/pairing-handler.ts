@@ -1,5 +1,5 @@
 import type { DatabaseClient } from "@mydrop/core";
-import { generatePairingCode } from "@mydrop/core";
+import { generatePairingToken } from "@mydrop/core";
 
 interface PendingPairing {
   readonly deviceId: string;
@@ -21,7 +21,7 @@ export class PairingHandler {
     deviceId: string,
     deviceName: string,
   ): Promise<{ pairingCode: string }> {
-    const pairingCode = generatePairingCode();
+    const pairingCode = generatePairingToken();
     this.#pending.set(deviceId, {
       deviceId,
       deviceName,
