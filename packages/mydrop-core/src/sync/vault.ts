@@ -41,6 +41,7 @@ export function deriveVaultKeyFromPassphrase(
   return { key, salt };
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- hkdf is sync but TS types declare Promise
 export async function deriveDbKey(
   vaultKey: VaultKey,
   purpose: string,

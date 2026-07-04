@@ -41,7 +41,7 @@ export async function openV1MobileStore(
 
     if (!state.passphraseSalt) throw new Error("Vault state corrupted: missing passphrase salt");
     const salt = hexToBytes(state.passphraseSalt);
-    const vaultKey = await deriveVaultKeyFromPassphrase(passphrase, salt);
+    const vaultKey = deriveVaultKeyFromPassphrase(passphrase, salt);
     const dbKeyHex = vaultKeyToDbEncryptionKeyHex(vaultKeyToHex(vaultKey));
 
     const client = await adapter.open({
@@ -65,7 +65,7 @@ export async function openV1MobileStore(
 
   if (state.mode === "auto" && !state.vaultKeyHex && passphrase) {
     const saltBytes = randomBytes(16);
-    const vaultKey = await deriveVaultKeyFromPassphrase(passphrase, saltBytes);
+    const vaultKey = deriveVaultKeyFromPassphrase(passphrase, saltBytes);
     const vaultKeyHex = vaultKeyToHex(vaultKey);
     const dbKeyHex = vaultKeyToDbEncryptionKeyHex(vaultKeyHex);
 

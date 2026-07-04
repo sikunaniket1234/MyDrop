@@ -88,15 +88,17 @@ export function DetailScreen({
         {
           text: "Delete",
           style: "destructive",
-          onPress: async () => {
-            try {
-              await fetch(`${apiBase}/api/items/${item.id}`, {
-                method: "DELETE",
-              });
-              onDelete?.(item.id);
-            } catch {
-              Alert.alert("Delete failed", "Could not delete the item");
-            }
+          onPress: () => {
+            void (async () => {
+              try {
+                await fetch(`${apiBase}/api/items/${item.id}`, {
+                  method: "DELETE",
+                });
+                onDelete?.(item.id);
+              } catch {
+                Alert.alert("Delete failed", "Could not delete the item");
+              }
+            })();
           },
         },
       ],

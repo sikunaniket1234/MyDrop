@@ -17,7 +17,7 @@ const shareBtn = document.getElementById("shareBtn")!;
 const textInput = document.getElementById("textInput") as HTMLTextAreaElement;
 const itemsEl = document.getElementById("items")!;
 
-async function setStatus(text: string): Promise<void> {
+function setStatus(text: string): void {
   statusEl.textContent = text;
 }
 
@@ -27,9 +27,9 @@ async function fetchItems(): Promise<void> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const items = (await res.json()) as Item[];
     renderItems(items);
-    await setStatus(`Connected · ${items.length} items`);
+    setStatus(`Connected · ${items.length} items`);
   } catch {
-    await setStatus("Failed to fetch items");
+    setStatus("Failed to fetch items");
   }
 }
 
@@ -73,7 +73,7 @@ async function shareText(): Promise<void> {
     textInput.value = "";
     await fetchItems();
   } catch {
-    await setStatus("Failed to share");
+    setStatus("Failed to share");
   }
 }
 

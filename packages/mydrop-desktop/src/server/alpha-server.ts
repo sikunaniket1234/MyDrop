@@ -63,9 +63,11 @@ const restRouter = createApiRouter(syncServer.engine, v1Client, fileStore);
 const io = new Server(server, { cors: { origin: "*" } });
 
 io.on("connection", async (socket) => {
+  console.log(`[ws] Client connected: ${socket.id} (transport: ${socket.conn.transport.name})`);
   socket.emit("items:snapshot", store.listItems());
   socket.emit("v1:snapshot", await syncServer.engine.listItems());
   socket.emit("devices:online", syncServer.onlineDeviceIds);
+  socket.on("disconnect", () => console.log(`[ws] Client disconnected: ${socket.id}`));
 });
 
 syncServer.onPeersChanged((onlineIds) => {
@@ -220,6 +222,7 @@ handler = async function handleRequest(request: IncomingMessage, response: Serve
         content: (input.content as string | null) ?? null,
         fileId: (input.fileId as string | null) ?? null,
       });
+      console.log(`[rest] Created v1 item ${item.id}, emitting v1:item:created to ${io.engine.clientsCount} clients`);
       io.emit("v1:item:created", item);
       sendJson(response, 201, item);
       return;

@@ -77,7 +77,7 @@ export function MyDropAlphaApp(): React.ReactElement {
     setConnected(false);
 
     const socket = io(normalized, {
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 2000,
@@ -88,15 +88,31 @@ export function MyDropAlphaApp(): React.ReactElement {
       console.warn("[DEBUG] socket connected to " + normalized);
       setConnected(true);
       syncPeer.current?.connect(normalized);
+      // Fallback: fetch items via HTTP in case socket snapshot is delayed
+      fetch(`${normalized}/v1/items`)
+        .then(res => res.json())
+        .then(data => {
+          const list = (data as { items?: Item[] }) ?? data;
+          const itemsArray = Array.isArray(list) ? list : list.items ?? [];
+          console.warn("[DEBUG] HTTP fallback fetched " + itemsArray.length + " items");
+          if (itemsArray.length > 0) setItems(itemsArray);
+        })
+        .catch(() => {});
     });
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason) => {
+      console.warn("[DEBUG] socket disconnected: " + reason);
       setConnected(false);
       syncPeer.current?.disconnect();
     });
+    socket.on("connect_error", (err) => {
+      console.warn("[DEBUG] socket connection error: " + err.message);
+    });
     socket.on("v1:snapshot", snapshot => {
+      console.warn("[DEBUG] v1:snapshot received: " + (snapshot as Item[]).length + " items");
       setItems(snapshot as Item[]);
     });
     socket.on("v1:item:created", item => {
+      console.warn("[DEBUG] v1:item:created received: " + (item as Item).id);
       setItems(current => [
         item as Item,
         ...current.filter(
@@ -105,13 +121,14 @@ export function MyDropAlphaApp(): React.ReactElement {
       ]);
     });
     socket.on("v1:item:deleted", (data: { id: string }) => {
+      console.warn("[DEBUG] v1:item:deleted received: " + data.id);
       setItems(current => current.filter(i => i.id !== data.id));
     });
     socket.on("device:trusted", () => {});
     socket.connect();
   }
 
-  async function initStore(result: { store: V1MobileStore }): Promise<void> {
+  function initStore(result: { store: V1MobileStore }): void {
     setStore(result.store);
     setPhase("main");
 
@@ -137,7 +154,7 @@ export function MyDropAlphaApp(): React.ReactElement {
     try {
       const result = await openV1MobileStore(passphraseValue);
       if (result.needsPassphrase) return;
-      await initStore(result);
+      initStore(result);
     } catch (err: unknown) {
       console.warn("[DEBUG] handleVaultUnlock FAILED: " + (err instanceof Error ? err.message : String(err)));
     }
@@ -205,9 +222,9 @@ export function MyDropAlphaApp(): React.ReactElement {
         }}
         onSkip={() => {
           void openV1MobileStore()
-            .then(async result => {
+            .then(result => {
               if (result.needsPassphrase) return;
-              await initStore(result);
+      void initStore(result);
             })
             .catch(() => {});
         }}

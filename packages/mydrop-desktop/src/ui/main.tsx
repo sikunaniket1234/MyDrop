@@ -50,7 +50,7 @@ function App(): React.ReactElement {
   const [pairing, setPairing] = useState<PairingSession | null>(null);
   const [pairingLoading, setPairingLoading] = useState(false);
 
-  const socket = useMemo(() => io(apiBase, { transports: ["websocket", "polling"] }), []);
+  const socket = useMemo(() => io(apiBase, { transports: ["polling", "websocket"] }), []);
 
   const quickShare = useQuickShare(
     (text) => { void shareText(text); },
@@ -61,16 +61,19 @@ function App(): React.ReactElement {
     void refreshItems();
     void refreshDevices();
 
-    socket.on("connect", () => setStatus("Connected"));
-    socket.on("disconnect", () => setStatus("Disconnected"));
+    socket.on("connect", () => { setStatus("Connected"); console.log("[ws] Connected to server"); });
+    socket.on("disconnect", (reason) => { setStatus("Disconnected"); console.log("[ws] Disconnected:", reason); });
+    socket.on("connect_error", (err) => { console.log("[ws] Connection error:", err.message); });
 
-    socket.on("items:snapshot", (snapshot: AlphaItem[]) => setAlphaItems(snapshot));
+    socket.on("items:snapshot", (snapshot: AlphaItem[]) => { setAlphaItems(snapshot); console.log(`[ws] Received ${snapshot.length} alpha items`); });
     socket.on("item:created", (item: AlphaItem) => {
+      console.log("[ws] item:created:", item.id);
       setAlphaItems(current => [item, ...current.filter(e => e.id !== item.id)]);
     });
 
-    socket.on("v1:snapshot", (snapshot: Item[]) => setV1Items(snapshot));
+    socket.on("v1:snapshot", (snapshot: Item[]) => { setV1Items(snapshot); console.log(`[ws] Received ${snapshot.length} v1 items`); });
     socket.on("v1:item:created", (item: Item) => {
+      console.log("[ws] v1:item:created:", item.id);
       setV1Items(current => [item, ...current.filter(e => e.id !== item.id)]);
     });
 
@@ -409,7 +412,7 @@ function App(): React.ReactElement {
                 <button
                   type="button"
                   className="btnSecondary"
-                  onClick={() => { navigator.clipboard.writeText(pairing.pairingCode); }}
+                  onClick={() => { void navigator.clipboard.writeText(pairing.pairingCode); }}
                 >
                   Copy code
                 </button>
