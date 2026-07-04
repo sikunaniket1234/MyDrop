@@ -1,6 +1,7 @@
 import type { Item } from "@mydrop/core";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -10,42 +11,105 @@ import { theme } from "./theme.js";
 
 interface ConflictCopy {
   id: string;
-  version: string;
-  device: string;
-  time: string;
-  content: string;
+  content: string | null;
+  losingDevice: string;
+  createdAt: number;
+}
+
+interface ConflictedItem {
+  itemId: string;
+  itemTitle: string;
+  copies: ConflictCopy[];
 }
 
 interface Props {
-  item: Item;
-  copies: ConflictCopy[];
-  onResolve: (copyId: string, keepBoth: boolean) => void;
+  apiBase: string;
+  items: Item[];
   onBack: () => void;
 }
 
 export function ConflictsScreen({
-  copies,
-  onResolve,
+  apiBase,
+  items,
   onBack,
 }: Props): React.ReactElement {
-  const [done, setDone] = useState<string | null>(null);
+  const [conflictedItems, setConflictedItems] = useState<ConflictedItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [resolvedId, setResolvedId] = useState<string | null>(null);
 
-  if (done) {
+  useEffect(() => {
+    void fetchConflicts();
+  }, [apiBase, items]);
+
+  async function fetchConflicts(): Promise<void> {
+    setLoading(true);
+    const results: ConflictedItem[] = [];
+    for (const item of items) {
+      try {
+        const res = await fetch(
+          `${apiBase}/v1/items/${item.id}/conflicts`,
+        );
+        if (!res.ok) continue;
+        const data = (await res.json()) as { conflicts: ConflictCopy[] };
+        if (data.conflicts.length > 0) {
+          results.push({
+            itemId: item.id,
+            itemTitle: item.title,
+            copies: data.conflicts,
+          });
+        }
+      } catch {
+        // skip
+      }
+    }
+    setConflictedItems(results);
+    setLoading(false);
+  }
+
+  async function handleResolve(
+    itemId: string,
+    copyId: string,
+    keepBoth: boolean,
+  ): Promise<void> {
+    try {
+      await fetch(`${apiBase}/v1/items/${itemId}/resolve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ copyId, keepBoth }),
+      });
+      setResolvedId(itemId);
+      setConflictedItems(current => current.filter(c => c.itemId !== itemId));
+    } catch {
+      // ignore
+    }
+  }
+
+  if (loading) {
     return (
       <View style={styles.container}>
-        <View style={styles.doneContainer}>
+        <StatusBar barStyle="light-content" backgroundColor={theme.surface0} />
+        <View style={styles.centered}>
+          <Text style={styles.loadingText}>Checking for conflicts...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (conflictedItems.length === 0) {
+    return (
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor={theme.surface0} />
+        <TouchableOpacity onPress={onBack} style={styles.backBtn}>
+          <Text style={styles.backText}>← Back</Text>
+        </TouchableOpacity>
+        <View style={styles.centered}>
           <View style={styles.successCircle}>
             <Text style={styles.successIcon}>✓</Text>
           </View>
-          <Text style={styles.doneTitle}>Conflict resolved</Text>
-          <Text style={styles.doneSubtitle}>
-            {done === "both"
-              ? "Both versions kept as separate items"
-              : `Version ${done} kept`}
+          <Text style={styles.emptyTitle}>No conflicts</Text>
+          <Text style={styles.emptySubtitle}>
+            All items are in sync across your devices
           </Text>
-          <TouchableOpacity style={styles.backBtn} onPress={onBack}>
-            <Text style={styles.backBtnText}>Back</Text>
-          </TouchableOpacity>
         </View>
       </View>
     );
@@ -53,62 +117,72 @@ export function ConflictsScreen({
 
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={theme.surface0} />
+      <TouchableOpacity onPress={onBack} style={styles.backBtn}>
+        <Text style={styles.backText}>← Back</Text>
+      </TouchableOpacity>
+
       <View style={styles.warningBanner}>
         <Text style={styles.warningIcon}>⚠</Text>
         <View>
-          <Text style={styles.warningTitle}>2 versions found</Text>
+          <Text style={styles.warningTitle}>
+            {conflictedItems.length} item{conflictedItems.length !== 1 ? "s" : ""} with conflicts
+          </Text>
           <Text style={styles.warningSub}>
-            Both devices edited this note while offline
+            Different versions were edited on multiple devices
           </Text>
         </View>
       </View>
 
-      <View style={styles.grid}>
-        {copies.map(c => (
-          <View key={c.id} style={styles.copyCard}>
-            <Text style={styles.copyVersion}>Version {c.version}</Text>
-            <Text style={styles.copyMeta}>
-              {c.device} · {c.time}
-            </Text>
-            <View style={styles.copyContent}>
-              <Text style={styles.copyText}>{c.content}</Text>
+      {conflictedItems.map(ci => (
+        <View key={ci.itemId} style={styles.itemSection}>
+          {resolvedId === ci.itemId ? (
+            <View style={styles.resolvedBanner}>
+              <Text style={styles.resolvedText}>✓ Resolved</Text>
             </View>
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.actions}>
-        {copies.map(c => (
-          <TouchableOpacity
-            key={c.id}
-            style={[styles.actionBtn, c.version === "B" && styles.actionBtnAccent]}
-            onPress={() => {
-              setDone(c.version);
-              onResolve(c.id, false);
-            }}
-          >
-            <Text
-              style={[
-                styles.actionText,
-                c.version === "B" && styles.actionTextAccent,
-              ]}
-            >
-              Keep {c.version}
-            </Text>
-          </TouchableOpacity>
-        ))}
-        <TouchableOpacity
-          style={styles.actionBtn}
-          onPress={() => {
-            setDone("both");
-            onResolve("", true);
-          }}
-        >
-          <Text style={[styles.actionText, styles.actionTextMuted]}>
-            Keep both
-          </Text>
-        </TouchableOpacity>
-      </View>
+          ) : (
+            <>
+              <Text style={styles.itemTitle}>{ci.itemTitle || "(untitled)"}</Text>
+              <View style={styles.grid}>
+                {ci.copies.map((c, idx) => (
+                  <View key={c.id} style={styles.copyCard}>
+                    <Text style={styles.copyVersion}>
+                      Version {String.fromCharCode(65 + idx)}
+                    </Text>
+                    <Text style={styles.copyMeta}>
+                      {c.losingDevice} ·{" "}
+                      {new Date(c.createdAt).toLocaleTimeString()}
+                    </Text>
+                    <View style={styles.copyContent}>
+                      <Text style={styles.copyText} numberOfLines={6}>
+                        {c.content || "(file)"}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.keepBtn}
+                      onPress={() =>
+                        void handleResolve(ci.itemId, c.id, false)
+                      }
+                    >
+                      <Text style={styles.keepBtnText}>
+                        Keep {String.fromCharCode(65 + idx)}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+              <TouchableOpacity
+                style={styles.keepBothBtn}
+                onPress={() =>
+                  void handleResolve(ci.itemId, ci.copies[0]!.id, true)
+                }
+              >
+                <Text style={styles.keepBothBtnText}>Keep both</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      ))}
     </View>
   );
 }
@@ -120,6 +194,51 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
   },
+  backBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 0.5,
+    borderBottomColor: theme.border,
+    marginBottom: 10,
+  },
+  backText: {
+    color: theme.textAccent,
+    fontSize: 13,
+  },
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingText: {
+    fontSize: 13,
+    color: theme.textMuted,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: "500",
+    color: theme.textPrimary,
+    marginBottom: 4,
+  },
+  emptySubtitle: {
+    fontSize: 12,
+    color: theme.textMuted,
+  },
+  successCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: theme.bgSuccess,
+    borderWidth: 0.5,
+    borderColor: theme.borderSuccess,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  successIcon: {
+    fontSize: 20,
+    color: theme.textSuccess,
+  },
   warningBanner: {
     flexDirection: "row",
     gap: 8,
@@ -128,7 +247,7 @@ const styles = StyleSheet.create({
     borderColor: theme.borderWarning,
     borderRadius: 10,
     padding: 10,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   warningIcon: {
     fontSize: 15,
@@ -146,10 +265,19 @@ const styles = StyleSheet.create({
     color: theme.textWarning,
     opacity: 0.8,
   },
+  itemSection: {
+    marginBottom: 16,
+  },
+  itemTitle: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: theme.textPrimary,
+    marginBottom: 8,
+  },
   grid: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 14,
+    marginBottom: 8,
   },
   copyCard: {
     flex: 1,
@@ -168,12 +296,13 @@ const styles = StyleSheet.create({
   copyMeta: {
     fontSize: 10,
     color: theme.textMuted,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   copyContent: {
     backgroundColor: theme.surface0,
     borderRadius: 6,
     padding: 6,
+    marginBottom: 8,
   },
   copyText: {
     fontSize: 10,
@@ -181,75 +310,41 @@ const styles = StyleSheet.create({
     color: theme.textSecondary,
     lineHeight: 17,
   },
-  actions: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  actionBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
+  keepBtn: {
+    paddingVertical: 6,
+    borderRadius: 6,
     borderWidth: 0.5,
     borderColor: theme.border,
-    backgroundColor: theme.surface1,
+    backgroundColor: theme.surface0,
     alignItems: "center",
-    justifyContent: "center",
   },
-  actionBtnAccent: {
-    borderColor: theme.borderAccent,
-    backgroundColor: theme.bgAccent,
-  },
-  actionText: {
-    fontSize: 12,
-    color: theme.textPrimary,
-  },
-  actionTextAccent: {
-    color: theme.textAccent,
-  },
-  actionTextMuted: {
+  keepBtnText: {
+    fontSize: 11,
     color: theme.textSecondary,
   },
-  doneContainer: {
+  keepBothBtn: {
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 0.5,
+    borderColor: theme.borderAccent,
+    backgroundColor: theme.bgAccent,
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 40,
   },
-  successCircle: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
+  keepBothBtnText: {
+    fontSize: 11,
+    color: theme.textAccent,
+  },
+  resolvedBanner: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
     backgroundColor: theme.bgSuccess,
     borderWidth: 0.5,
     borderColor: theme.borderSuccess,
     alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 14,
   },
-  successIcon: {
-    fontSize: 24,
-    color: theme.textSuccess,
-  },
-  doneTitle: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: theme.textPrimary,
-    marginBottom: 5,
-  },
-  doneSubtitle: {
+  resolvedText: {
     fontSize: 12,
-    color: theme.textMuted,
-    marginBottom: 18,
-    textAlign: "center",
-  },
-  backBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 0.5,
-    borderColor: theme.border,
-  },
-  backBtnText: {
-    fontSize: 13,
-    color: theme.textSecondary,
+    color: theme.textSuccess,
   },
 });

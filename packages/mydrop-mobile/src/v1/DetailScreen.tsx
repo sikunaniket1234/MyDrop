@@ -15,12 +15,14 @@ interface Props {
   item: Item;
   onBack: () => void;
   apiBase: string;
+  onDelete?: (id: string) => void;
 }
 
 export function DetailScreen({
   item,
   onBack,
   apiBase,
+  onDelete,
 }: Props): React.ReactElement {
   const color = itemTypeColor[item.type];
   const bg = itemTypeBg[item.type];
@@ -83,15 +85,28 @@ export function DetailScreen({
       "Are you sure you want to delete this item?",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: () => onBack() },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await fetch(`${apiBase}/api/items/${item.id}`, {
+                method: "DELETE",
+              });
+              onDelete?.(item.id);
+            } catch {
+              Alert.alert("Delete failed", "Could not delete the item");
+            }
+          },
+        },
       ],
     );
   }
 
   const metaFields: [string, string][] = [
     ["Type", item.type],
-    ["Synced", "2 devices"],
     ["From", item.createdBy],
+    ["Updated", new Date(item.updatedAt).toLocaleString()],
   ];
 
   return (
@@ -120,16 +135,6 @@ export function DetailScreen({
               <Text style={styles.metaValue}>{value}</Text>
             </View>
           ))}
-        </View>
-      </View>
-
-      <View style={styles.tagsRow}>
-        <Text style={styles.tagHeader}>Tags</Text>
-        <View style={styles.tag}>
-          <Text style={styles.tagText}>#work</Text>
-        </View>
-        <View style={styles.tag}>
-          <Text style={styles.tagText}>#mydrop</Text>
         </View>
       </View>
 

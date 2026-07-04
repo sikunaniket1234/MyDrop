@@ -1,5 +1,5 @@
 import type { Item } from "@mydrop/core";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Platform,
   StatusBar,
@@ -31,13 +31,6 @@ type Screen =
   | "pairing"
   | "conflicts";
 
-const TABS: TabItem[] = [
-  { id: "inbox", label: "Inbox", icon: "📥" },
-  { id: "devices", label: "Devices", icon: "📱" },
-  { id: "conflicts", label: "Conflicts", icon: "⚠", badge: 1, warn: true },
-  { id: "pairing", label: "Pair", icon: "🔗" },
-];
-
 export function MyDropAlphaApp(): React.ReactElement {
   const [phase, setPhase] = useState<AppPhase>("vault");
   const [screen, setScreen] = useState<Screen>("inbox");
@@ -49,6 +42,7 @@ export function MyDropAlphaApp(): React.ReactElement {
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPeerStatus>("disconnected");
+  const [conflictCount, setConflictCount] = useState(0);
   const syncPeer = useRef<SyncPeerClient | null>(null);
   const mdnsRef = useRef<MdnsBrowser | null>(null);
   const shareHandlerRef = useRef<ShareIntentHandler | null>(null);
@@ -59,10 +53,8 @@ export function MyDropAlphaApp(): React.ReactElement {
   );
 
   async function initStore(result: { store: V1MobileStore }): Promise<void> {
-    console.warn("[DEBUG] initStore: setting store and phase=main");
     setStore(result.store);
     setPhase("main");
-    console.warn("[DEBUG] initStore: done");
 
     const handler = new ShareIntentHandler(result.store);
     handler.subscribe(() => {
@@ -82,13 +74,11 @@ export function MyDropAlphaApp(): React.ReactElement {
 
   async function handleVaultUnlock(passphraseValue: string): Promise<void> {
     try {
-      console.warn("[DEBUG] handleVaultUnlock: calling openV1MobileStore");
       const result = await openV1MobileStore(passphraseValue);
-      console.warn("[DEBUG] handleVaultUnlock: needsPassphrase=" + result.needsPassphrase);
       if (result.needsPassphrase) return;
       await initStore(result);
-    } catch (err: unknown) {
-      console.warn("[DEBUG] handleVaultUnlock FAILED: " + (err instanceof Error ? err.message : String(err)));
+    } catch {
+      // error handled by VaultScreen
     }
   }
 
@@ -132,15 +122,50 @@ export function MyDropAlphaApp(): React.ReactElement {
         ),
       ]);
     });
+    socket.on("v1:item:deleted", (data: { id: string }) => {
+      setItems(current => current.filter(i => i.id !== data.id));
+    });
+    socket.on("device:trusted", () => {
+      // refresh device list if on devices screen
+    });
     return () => {
       socket.off("connect");
       socket.off("disconnect");
       socket.off("v1:snapshot");
       socket.off("v1:item:created");
+      socket.off("v1:item:deleted");
+      socket.off("device:trusted");
       socket.disconnect();
       syncPeer.current?.disconnect();
     };
   }, [socket, store, apiBase, phase]);
+
+  const fetchConflictCount = useCallback(async (): Promise<void> => {
+    if (!store) return;
+    try {
+      const allItems = await store.listItems();
+      let total = 0;
+      for (const item of allItems) {
+        const res = await fetch(
+          `${apiBase}/v1/items/${item.id}/conflicts`,
+        );
+        if (res.ok) {
+          const data = (await res.json()) as { conflicts: unknown[] };
+          if (data.conflicts.length > 0) total += data.conflicts.length;
+        }
+      }
+      setConflictCount(total);
+    } catch {
+      // ignore
+    }
+  }, [store, apiBase]);
+
+  useEffect(() => {
+    if (phase !== "main") return;
+    void fetchConflictCount();
+    const interval = setInterval(() => void fetchConflictCount(), 30000);
+    return () => clearInterval(interval);
+  }, [phase, fetchConflictCount]);
 
   if (phase === "vault") {
     return (
@@ -149,15 +174,13 @@ export function MyDropAlphaApp(): React.ReactElement {
           void handleVaultUnlock(result.passphrase);
         }}
         onSkip={() => {
-          console.warn("[DEBUG] onSkip called");
           void openV1MobileStore()
             .then(async result => {
-              console.warn("[DEBUG] onSkip: needsPassphrase=" + result.needsPassphrase);
               if (result.needsPassphrase) return;
               await initStore(result);
             })
-            .catch(err => {
-              console.warn("[DEBUG] onSkip FAILED: " + (err instanceof Error ? err.message : String(err)));
+            .catch(() => {
+              // error
             });
         }}
       />
@@ -178,6 +201,19 @@ export function MyDropAlphaApp(): React.ReactElement {
     : "Disconnected";
 
   const isSyncing = connected && syncStatus === "syncing";
+
+  const tabs: TabItem[] = [
+    { id: "inbox", label: "Inbox", icon: "📥" },
+    { id: "devices", label: "Devices", icon: "📱" },
+    {
+      id: "conflicts",
+      label: "Conflicts",
+      icon: "⚠",
+      badge: conflictCount > 0 ? conflictCount : undefined,
+      warn: conflictCount > 0,
+    },
+    { id: "pairing", label: "Pair", icon: "🔗" },
+  ] as TabItem[];
 
   return (
     <View style={styles.root}>
@@ -256,6 +292,11 @@ export function MyDropAlphaApp(): React.ReactElement {
               setScreen("inbox");
             }}
             apiBase={apiBase}
+            onDelete={(id) => {
+              setItems(current => current.filter(i => i.id !== id));
+              setSelectedItem(null);
+              setScreen("inbox");
+            }}
           />
         )}
         {screen === "devices" && (
@@ -266,31 +307,15 @@ export function MyDropAlphaApp(): React.ReactElement {
         )}
         {screen === "pairing" && (
           <PairingScreen
+            apiBase={apiBase}
             onComplete={() => setScreen("devices")}
             onCancel={() => setScreen("devices")}
           />
         )}
-        {screen === "conflicts" && selectedItem && (
+        {screen === "conflicts" && (
           <ConflictsScreen
-            item={selectedItem}
-            copies={[
-              {
-                id: "a",
-                version: "A",
-                device: "Laptop",
-                time: "10:42 AM",
-                content: "Meeting notes\n— API rate limits\n— OSWAS module",
-              },
-              {
-                id: "b",
-                version: "B",
-                device: "Phone",
-                time: "10:44 AM",
-                content:
-                  "Meeting notes\n— API rate limits\n— OSWAS module\n— Action: Redis config",
-              },
-            ]}
-            onResolve={() => {}}
+            apiBase={apiBase}
+            items={items}
             onBack={() => setScreen("inbox")}
           />
         )}
@@ -298,7 +323,7 @@ export function MyDropAlphaApp(): React.ReactElement {
 
       {screen !== "detail" && (
         <TabBar
-          tabs={TABS}
+          tabs={tabs}
           active={screen}
           onSelect={id => setScreen(id as Screen)}
         />

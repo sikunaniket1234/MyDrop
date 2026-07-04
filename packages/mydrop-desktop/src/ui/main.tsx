@@ -21,6 +21,11 @@ interface DeviceEntry {
   lastSeen: number | null;
 }
 
+interface PairingSession {
+  deviceId: string;
+  pairingCode: string;
+}
+
 interface ConflictedCopyView {
   id: string;
   content: string | null;
@@ -42,6 +47,8 @@ function App(): React.ReactElement {
   const [conflicts, setConflicts] = useState<Map<string, ConflictedCopyView[]>>(new Map());
   const [filterType, setFilterType] = useState<ItemTypeLabel | "all">("all");
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
+  const [pairing, setPairing] = useState<PairingSession | null>(null);
+  const [pairingLoading, setPairingLoading] = useState(false);
 
   const socket = useMemo(() => io(apiBase, { transports: ["websocket"] }), []);
 
@@ -96,6 +103,30 @@ function App(): React.ReactElement {
       const data = (await res.json()) as { devices: DeviceEntry[] };
       setDevices(data.devices);
     } catch { /* ignore */ }
+  }
+
+  async function initiatePairing(): Promise<void> {
+    setPairingLoading(true);
+    try {
+      const res = await fetch(`${apiBase}/v1/pairing/request`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId: `desktop_${Date.now().toString(36)}`,
+          deviceName: "Desktop",
+        }),
+      });
+      if (!res.ok) throw new Error("Pairing request failed");
+      const data = (await res.json()) as { pairingCode: string };
+      setPairing({
+        deviceId: `desktop_${Date.now().toString(36)}`,
+        pairingCode: data.pairingCode,
+      });
+    } catch {
+      // ignore
+    } finally {
+      setPairingLoading(false);
+    }
   }
 
   async function checkConflicts(itemId: string): Promise<ConflictedCopyView[] | null> {
@@ -349,11 +380,42 @@ function App(): React.ReactElement {
                 </div>
               </div>
             ))}
-            <div className="deviceCard addDevice">
-              <span className="addDeviceIcon">+</span>
-              <span>Pair new device</span>
+            <div
+              className="deviceCard addDevice"
+              onClick={() => void initiatePairing()}
+              style={{ cursor: pairingLoading ? "wait" : "pointer" }}
+            >
+              <span className="addDeviceIcon">{pairingLoading ? "..." : "+"}</span>
+              <span>{pairingLoading ? "Starting..." : "Pair new device"}</span>
             </div>
           </div>
+
+          {pairing && (
+            <div className="pairingModal" onClick={() => setPairing(null)}>
+              <div className="pairingModalContent" onClick={e => e.stopPropagation()}>
+                <div className="pairingModalHeader">
+                  <h2>Pair New Device</h2>
+                  <button type="button" className="closeBtn" onClick={() => setPairing(null)}>×</button>
+                </div>
+                <p className="pairingInstructions">
+                  Enter this 6-digit code on your mobile device to complete pairing.
+                </p>
+                <div className="pairingCodeDisplay">
+                  {pairing.pairingCode.split("").map((digit, i) => (
+                    <span key={i} className="pairingDigit">{digit}</span>
+                  ))}
+                </div>
+                <p className="pairingExpiry">Code expires in 5 minutes</p>
+                <button
+                  type="button"
+                  className="btnSecondary"
+                  onClick={() => { navigator.clipboard.writeText(pairing.pairingCode); }}
+                >
+                  Copy code
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

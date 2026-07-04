@@ -676,3 +676,84 @@ body {
 .addDeviceIcon {
   font-size: 24px;
 }
+
+/* Pairing Modal */
+.pairingModal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.pairingModalContent {
+  background: var(--surface1);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px;
+  width: 380px;
+  text-align: center;
+}
+
+.pairingModalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.pairingModalHeader h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: var(--textMuted);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.closeBtn:hover {
+  color: var(--textPrimary);
+}
+
+.pairingInstructions {
+  color: var(--textMuted);
+  font-size: 13px;
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.pairingCodeDisplay {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.pairingDigit {
+  width: 48px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  border: 1px solid var(--borderStrong);
+  border-radius: 10px;
+  font-size: 24px;
+  font-weight: 600;
+  font-family: monospace;
+  color: var(--textAccent);
+}
+
+.pairingExpiry {
+  font-size: 11px;
+  color: var(--textMuted);
+  margin-bottom: 16px;
+}

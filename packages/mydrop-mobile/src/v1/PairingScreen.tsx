@@ -1,76 +1,150 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
+  Platform,
+  StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { theme } from "./theme.js";
 
 interface Props {
+  apiBase: string;
   onComplete: () => void;
   onCancel: () => void;
 }
 
 export function PairingScreen({
+  apiBase,
   onComplete,
+  onCancel,
 }: Props): React.ReactElement {
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState<"init" | "confirm" | "success">("init");
+  const [pairingCode, setPairingCode] = useState("");
+  const [deviceName, setDeviceName] = useState("Phone");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState(300);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (step === "init") {
+      countdownRef.current = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) {
+            if (countdownRef.current) clearInterval(countdownRef.current);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, [step]);
+
+  function formatCountdown(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  }
+
+  async function handlePairWithCode(): Promise<void> {
+    const code = pairingCode.trim();
+    if (code.length !== 6) {
+      setError("Pairing code must be 6 digits");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiBase}/v1/pairing/confirm`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId: `mobile_${Date.now().toString(36)}`,
+          pairingCode: code,
+          deviceName: deviceName || "Phone",
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        throw new Error(data.error ?? "Pairing failed");
+      }
+      setStep("success");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Pairing failed");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function renderStep(): React.ReactElement {
     switch (step) {
-      case 0:
+      case "init":
         return (
           <View style={styles.stepContainer}>
-            <Text style={styles.stepTitle}>Scan to pair a new device</Text>
+            <Text style={styles.stepTitle}>Pair with Desktop</Text>
             <Text style={styles.stepSubtitle}>
-              Open MyDrop on the other device and point it at this code
+              Enter the 6-digit pairing code shown on your desktop
             </Text>
-            <View style={styles.qrBox}>
-              <Text style={styles.qrPlaceholder}>QR</Text>
-            </View>
-            <Text style={styles.expiry}>Expires in 4:52</Text>
+
+            <TextInput
+              value={deviceName}
+              onChangeText={setDeviceName}
+              style={styles.input}
+              placeholder="Device name"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="none"
+            />
+
+            <TextInput
+              value={pairingCode}
+              onChangeText={text => {
+                const cleaned = text.replace(/[^0-9]/g, "").slice(0, 6);
+                setPairingCode(cleaned);
+                setError(null);
+              }}
+              style={[styles.input, styles.codeInput]}
+              placeholder="000000"
+              placeholderTextColor={theme.textMuted}
+              keyboardType="number-pad"
+              maxLength={6}
+              autoFocus
+            />
+
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+            {countdown > 0 ? (
+              <Text style={styles.expiry}>
+                Code expires in {formatCountdown(countdown)}
+              </Text>
+            ) : (
+              <Text style={[styles.expiry, styles.expiryExpired]}>
+                Code expired — get a new one from desktop
+              </Text>
+            )}
+
             <TouchableOpacity
-              style={styles.stepBtn}
-              onPress={() => setStep(1)}
+              style={[styles.primaryBtn, loading && styles.primaryBtnDisabled]}
+              onPress={() => void handlePairWithCode()}
+              disabled={loading || pairingCode.length !== 6}
             >
-              <Text style={styles.stepBtnText}>Scanned — continue</Text>
+              <Text style={styles.primaryBtnText}>
+                {loading ? "Pairing..." : "Pair Device"}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.cancelBtn} onPress={onCancel}>
+              <Text style={styles.cancelBtnText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         );
-      case 1:
-        return (
-          <View style={styles.stepContainer}>
-            <Text style={styles.stepTitle}>Confirm the code matches</Text>
-            <Text style={styles.stepSubtitle}>
-              Check both devices show the same 4 digits
-            </Text>
-            <View style={styles.codeRow}>
-              {["4", "8", "2", "1"].map((d, i) => (
-                <View key={i} style={styles.codeDigit}>
-                  <Text style={styles.codeDigitText}>{d}</Text>
-                </View>
-              ))}
-            </View>
-            <View style={styles.stepActions}>
-              <TouchableOpacity
-                style={styles.stepBtn}
-                onPress={() => setStep(0)}
-              >
-                <Text style={styles.stepBtnText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.stepBtn, styles.stepBtnPrimary]}
-                onPress={() => setStep(2)}
-              >
-                <Text style={[styles.stepBtnText, styles.stepBtnPrimaryText]}>
-                  Confirm
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        );
-      case 2:
+
+      case "success":
         return (
           <View style={styles.stepContainer}>
             <View style={styles.successCircle}>
@@ -78,27 +152,17 @@ export function PairingScreen({
             </View>
             <Text style={styles.stepTitle}>Device paired</Text>
             <Text style={styles.stepSubtitle}>
-              Syncing history — this may take a moment
-            </Text>
-            <View style={styles.progressBar}>
-              <View style={styles.progressFill} />
-            </View>
-            <Text style={styles.progressText}>
-              128 of 214 events synced
+              Your devices are now connected and will sync automatically
             </Text>
             <TouchableOpacity
-              style={[styles.stepBtn, styles.stepBtnOutline]}
-              onPress={() => {
-                setStep(0);
-                onComplete();
-              }}
+              style={styles.primaryBtn}
+              onPress={onComplete}
             >
-              <Text style={[styles.stepBtnText, styles.stepBtnOutlineText]}>
-                Go to devices
-              </Text>
+              <Text style={styles.primaryBtnText}>Go to Devices</Text>
             </TouchableOpacity>
           </View>
         );
+
       default:
         return <View />;
     }
@@ -106,17 +170,12 @@ export function PairingScreen({
 
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={theme.surface0} />
       <View style={styles.progressDots}>
-        {[0, 1, 2].map(i => (
-          <View
-            key={i}
-            style={[
-              styles.dot,
-              i < step && styles.dotDone,
-              i === step && styles.dotActive,
-            ]}
-          />
-        ))}
+        <View style={[styles.dot, styles.dotActive]} />
+        <View
+          style={[styles.dot, step === "success" && styles.dotDone]}
+        />
       </View>
       {renderStep()}
     </View>
@@ -127,6 +186,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.surface0,
+    paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0,
     paddingVertical: 20,
     paddingHorizontal: 20,
     alignItems: "center",
@@ -155,88 +215,74 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   stepTitle: {
-    fontSize: 14,
-    fontWeight: "500",
+    fontSize: 16,
+    fontWeight: "600",
     color: theme.textPrimary,
-    marginBottom: 5,
+    marginBottom: 6,
     textAlign: "center",
   },
   stepSubtitle: {
     fontSize: 12,
     color: theme.textMuted,
-    marginBottom: 18,
+    marginBottom: 20,
     textAlign: "center",
+    lineHeight: 18,
   },
-  qrBox: {
-    width: 150,
-    height: 150,
-    backgroundColor: theme.surface1,
+  input: {
+    width: "100%",
     borderWidth: 0.5,
-    borderColor: theme.border,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
+    borderColor: theme.borderStrong,
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 13,
+    color: theme.textPrimary,
+    backgroundColor: theme.surface1,
+    marginBottom: 10,
   },
-  qrPlaceholder: {
-    fontSize: 14,
-    color: theme.textSecondary,
+  codeInput: {
+    fontSize: 24,
+    fontFamily: "monospace",
+    textAlign: "center",
+    letterSpacing: 8,
+    height: 56,
+    marginBottom: 6,
+  },
+  errorText: {
+    fontSize: 12,
+    color: theme.textDanger,
+    marginBottom: 8,
   },
   expiry: {
     fontSize: 11,
     color: theme.textMuted,
     marginBottom: 18,
   },
-  stepBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 0.5,
-    borderColor: theme.border,
+  expiryExpired: {
+    color: theme.textWarning,
   },
-  stepBtnText: {
-    fontSize: 13,
-    color: theme.textSecondary,
-  },
-  stepBtnPrimary: {
+  primaryBtn: {
+    width: "100%",
+    paddingVertical: 12,
+    borderRadius: 10,
     backgroundColor: theme.fillAccent,
-    borderColor: theme.fillAccent,
+    alignItems: "center",
+    marginBottom: 10,
   },
-  stepBtnPrimaryText: {
+  primaryBtnDisabled: {
+    opacity: 0.5,
+  },
+  primaryBtnText: {
+    fontSize: 13,
+    fontWeight: "500",
     color: theme.onAccent,
   },
-  stepBtnOutline: {
-    borderColor: theme.borderAccent,
+  cancelBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
   },
-  stepBtnOutlineText: {
-    color: theme.textAccent,
-  },
-  codeRow: {
-    flexDirection: "row",
-    gap: 8,
-    justifyContent: "center",
-    marginBottom: 26,
-  },
-  codeDigit: {
-    width: 46,
-    height: 54,
-    backgroundColor: theme.surface1,
-    borderWidth: 0.5,
-    borderColor: theme.borderStrong,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  codeDigitText: {
-    fontSize: 22,
-    fontWeight: "500",
-    fontFamily: "monospace",
-    color: theme.textAccent,
-  },
-  stepActions: {
-    flexDirection: "row",
-    gap: 10,
-    justifyContent: "center",
+  cancelBtnText: {
+    fontSize: 12,
+    color: theme.textSecondary,
   },
   successCircle: {
     width: 54,
@@ -252,25 +298,5 @@ const styles = StyleSheet.create({
   successIcon: {
     fontSize: 24,
     color: theme.textSuccess,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: theme.surface1,
-    borderRadius: 4,
-    marginBottom: 8,
-    overflow: "hidden",
-    alignSelf: "stretch",
-    marginHorizontal: 16,
-  },
-  progressFill: {
-    width: "62%",
-    height: "100%",
-    backgroundColor: theme.fillAccent,
-    borderRadius: 4,
-  },
-  progressText: {
-    fontSize: 11,
-    color: theme.textMuted,
-    marginBottom: 18,
   },
 });

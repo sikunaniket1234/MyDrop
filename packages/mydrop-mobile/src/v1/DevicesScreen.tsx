@@ -1,5 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
+  RefreshControl,
+  ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -10,11 +13,10 @@ import { theme } from "./theme.js";
 interface DeviceEntry {
   id: string;
   name: string;
-  ver: string;
-  status: "online" | "offline";
-  seen: string;
-  storage: string;
-  pending: number;
+  status: string;
+  online: boolean;
+  trustedAt: number | null;
+  lastSeen: number | null;
 }
 
 interface Props {
@@ -27,97 +29,158 @@ export function DevicesScreen({
   onPair,
 }: Props): React.ReactElement {
   const [devices, setDevices] = useState<DeviceEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchDevices = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch(`${apiBase}/v1/devices`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { devices: DeviceEntry[] };
+      setDevices(data.devices);
+      setError(null);
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? `Cannot reach server: ${err.message}`
+          : "Cannot reach server",
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [apiBase]);
 
   useEffect(() => {
     void fetchDevices();
-  }, [apiBase]);
+  }, [fetchDevices]);
 
-  async function fetchDevices(): Promise<void> {
-    try {
-      const res = await fetch(`${apiBase}/v1/devices`);
-      const data = (await res.json()) as { devices: DeviceEntry[] };
-      setDevices(data.devices);
-    } catch {
-      // fallback demo data
-      setDevices([
-        { id: "d", name: "Desktop", ver: "v1.0.0", status: "online", seen: "now", storage: "142 MB", pending: 0 },
-        { id: "l", name: "Laptop", ver: "v1.0.0", status: "online", seen: "12s ago", storage: "89 MB", pending: 3 },
-        { id: "p", name: "Phone", ver: "v1.0.0", status: "offline", seen: "3h ago", storage: "211 MB", pending: 14 },
-      ]);
-    }
+  function handleRefresh(): void {
+    setRefreshing(true);
+    void fetchDevices();
+  }
+
+  function formatLastSeen(ts: number | null): string {
+    if (!ts) return "Never";
+    const diff = Date.now() - ts;
+    if (diff < 60000) return "Just now";
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return new Date(ts).toLocaleDateString();
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.list}>
-        {devices.map((d, i) => (
-          <View key={d.id} style={[styles.card, i > 0 && styles.cardGap]}>
-            <View style={styles.cardHeader}>
-              <View style={styles.cardTitleRow}>
-                <View
-                  style={[
-                    styles.statusDot,
-                    d.status === "online"
-                      ? styles.statusOnline
-                      : styles.statusOffline,
-                    d.status === "online" && styles.syncing,
-                  ]}
-                />
-                <Text style={styles.cardName}>{d.name}</Text>
-              </View>
-              <View style={styles.cardMeta}>
-                <Text style={styles.verText}>{d.ver}</Text>
-                <View
-                  style={[
-                    styles.statusBadge,
-                    d.status === "online"
-                      ? styles.statusBadgeOnline
-                      : styles.statusBadgeOffline,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.statusBadgeText,
-                      d.status === "online"
-                        ? styles.statusBadgeTextOnline
-                        : styles.statusBadgeTextOffline,
-                    ]}
-                  >
-                    {d.status}
-                  </Text>
-                </View>
-              </View>
+      <StatusBar barStyle="light-content" backgroundColor={theme.surface0} />
+
+      {loading ? (
+        <View style={styles.centered}>
+          <Text style={styles.loadingText}>Loading devices...</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.centered}>
+          <View style={styles.errorIconBox}>
+            <Text style={styles.errorIcon}>⚠</Text>
+          </View>
+          <Text style={styles.errorTitle}>Server unreachable</Text>
+          <Text style={styles.errorSubtitle}>{error}</Text>
+          <Text style={styles.errorHint}>
+            Make sure the desktop app is running on the same network
+          </Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={handleRefresh}>
+            <Text style={styles.retryBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.listWrap}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={theme.textMuted}
+              colors={[theme.fillAccent]}
+            />
+          }
+        >
+          {devices.length === 0 ? (
+            <View style={styles.centered}>
+              <Text style={styles.emptyTitle}>No devices paired</Text>
+              <Text style={styles.emptySubtitle}>
+                Pair your first device to start syncing
+              </Text>
             </View>
-            <View style={styles.statsGrid}>
-              {[
-                { label: "Storage", value: d.storage, warn: false },
-                {
-                  label: "Pending",
-                  value: d.pending > 0 ? `${d.pending} events` : "Up to date",
-                  warn: d.pending > 0,
-                },
-                { label: "Last seen", value: d.seen, warn: false },
-              ].map(stat => (
-                <View key={stat.label} style={styles.statBox}>
-                  <Text style={styles.statLabel}>{stat.label}</Text>
-                  <Text
-                    style={[
-                      styles.statValue,
-                      stat.warn && styles.statWarn,
-                    ]}
-                  >
-                    {stat.value}
-                  </Text>
+          ) : (
+            <View style={styles.list}>
+              {devices.map((d, i) => (
+                <View
+                  key={d.id}
+                  style={[styles.card, i > 0 && styles.cardGap]}
+                >
+                  <View style={styles.cardHeader}>
+                    <View style={styles.cardTitleRow}>
+                      <View
+                        style={[
+                          styles.statusDot,
+                          d.online
+                            ? styles.statusOnline
+                            : styles.statusOffline,
+                        ]}
+                      />
+                      <Text style={styles.cardName}>{d.name}</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        d.online
+                          ? styles.statusBadgeOnline
+                          : styles.statusBadgeOffline,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.statusBadgeText,
+                          d.online
+                            ? styles.statusBadgeTextOnline
+                            : styles.statusBadgeTextOffline,
+                        ]}
+                      >
+                        {d.online ? "Online" : "Offline"}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.statsGrid}>
+                    <View style={styles.statBox}>
+                      <Text style={styles.statLabel}>Status</Text>
+                      <Text style={styles.statValue}>{d.status}</Text>
+                    </View>
+                    <View style={styles.statBox}>
+                      <Text style={styles.statLabel}>Trusted</Text>
+                      <Text style={styles.statValue}>
+                        {d.trustedAt
+                          ? new Date(d.trustedAt).toLocaleDateString()
+                          : "—"}
+                      </Text>
+                    </View>
+                    <View style={styles.statBox}>
+                      <Text style={styles.statLabel}>Last seen</Text>
+                      <Text style={styles.statValue}>
+                        {formatLastSeen(d.lastSeen)}
+                      </Text>
+                    </View>
+                  </View>
                 </View>
               ))}
             </View>
-          </View>
-        ))}
-      </View>
+          )}
 
-      <TouchableOpacity style={styles.pairBtn} onPress={onPair}>
-        <Text style={styles.pairBtnText}>+ Pair new device</Text>
-      </TouchableOpacity>
+          <TouchableOpacity style={styles.pairBtn} onPress={onPair}>
+            <Text style={styles.pairBtnText}>+ Pair new device</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -126,8 +189,80 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.surface0,
+  },
+  listWrap: {
+    flex: 1,
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  listContent: {
+    flexGrow: 1,
+  },
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  loadingText: {
+    fontSize: 13,
+    color: theme.textMuted,
+  },
+  errorIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: theme.bgDanger,
+    borderWidth: 0.5,
+    borderColor: theme.borderDanger,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  errorIcon: {
+    fontSize: 20,
+    color: theme.textDanger,
+  },
+  errorTitle: {
+    fontSize: 15,
+    fontWeight: "500",
+    color: theme.textPrimary,
+    marginBottom: 4,
+  },
+  errorSubtitle: {
+    fontSize: 12,
+    color: theme.textMuted,
+    marginBottom: 4,
+    textAlign: "center",
+  },
+  errorHint: {
+    fontSize: 11,
+    color: theme.textMuted,
+    opacity: 0.7,
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  retryBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 0.5,
+    borderColor: theme.borderAccent,
+    backgroundColor: theme.bgAccent,
+  },
+  retryBtnText: {
+    fontSize: 12,
+    color: theme.textAccent,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: "500",
+    color: theme.textPrimary,
+    marginBottom: 4,
+  },
+  emptySubtitle: {
+    fontSize: 12,
+    color: theme.textMuted,
   },
   list: {},
   card: {
@@ -162,23 +297,10 @@ const styles = StyleSheet.create({
   statusOffline: {
     backgroundColor: theme.borderStrong,
   },
-  syncing: {
-    opacity: 0.7,
-  },
   cardName: {
     fontSize: 13,
     fontWeight: "500",
     color: theme.textPrimary,
-  },
-  cardMeta: {
-    flexDirection: "row",
-    gap: 6,
-    alignItems: "center",
-  },
-  verText: {
-    fontSize: 10,
-    color: theme.textMuted,
-    fontFamily: "monospace",
   },
   statusBadge: {
     borderRadius: 20,
@@ -225,9 +347,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: theme.textSecondary,
   },
-  statWarn: {
-    color: theme.textWarning,
-  },
   pairBtn: {
     marginTop: 12,
     paddingVertical: 10,
@@ -237,8 +356,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    flexDirection: "row",
-    gap: 6,
   },
   pairBtnText: {
     color: theme.textAccent,
