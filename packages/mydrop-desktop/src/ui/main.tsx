@@ -45,7 +45,10 @@ function App(): React.ReactElement {
 
   const socket = useMemo(() => io(apiBase, { transports: ["websocket"] }), []);
 
-  const quickShare = useQuickShare(shareText, shareFile);
+  const quickShare = useQuickShare(
+    (text) => { void shareText(text); },
+    (file) => { void shareFile(file); },
+  );
 
   useEffect(() => {
     void refreshItems();
@@ -116,21 +119,30 @@ function App(): React.ReactElement {
     } catch { /* ignore */ }
   }
 
-  async function shareText(): Promise<void> {
-    const body = text.trim();
+  async function shareText(overrideText?: string): Promise<void> {
+    const body = (overrideText ?? text).trim();
     if (body.length === 0) return;
     await postJson("/items/text", { body, sourceDevice });
-    setText("");
+    if (!overrideText) setText("");
   }
 
   async function shareFile(file: QuickShareItem | File): Promise<void> {
-    const isQuick = "dataUrl" in file && "fileName" in file;
-    const fileName = isQuick ? (file as QuickShareItem).fileName : (file as File).name;
-    const fileSize = isQuick ? (file as QuickShareItem).fileSize : (file as File).size;
-    const mimeType = isQuick ? (file as QuickShareItem).mimeType : (file as File).type || null;
-    const fileDataUrl = isQuick
-      ? (file as QuickShareItem).dataUrl
-      : await readFileAsDataUrl(file as File);
+    let fileName: string;
+    let fileSize: number;
+    let mimeType: string | null;
+    let fileDataUrl: string;
+
+    if ("dataUrl" in file && "fileName" in file) {
+      fileName = file.fileName;
+      fileSize = file.fileSize;
+      mimeType = file.mimeType;
+      fileDataUrl = file.dataUrl;
+    } else {
+      fileName = file.name;
+      fileSize = file.size;
+      mimeType = file.type || null;
+      fileDataUrl = await readFileAsDataUrl(file);
+    }
     await postJson("/items/file", {
       fileName,
       fileUri: `desktop://${fileName}`,

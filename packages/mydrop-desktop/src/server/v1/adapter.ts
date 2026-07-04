@@ -10,15 +10,17 @@ export class BetterSqlite3Client implements DatabaseClient {
     this.#db.pragma("foreign_keys = ON");
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await -- better-sqlite3 is synchronous, interface requires Promise
   async query<T extends DatabaseRow = DatabaseRow>(
     sql: string,
     parameters?: SqlParameters,
   ): Promise<T[]> {
     const stmt = this.#db.prepare(sql);
     const rows = parameters ? stmt.all(...parameters) : stmt.all();
-    return rows as T[];
+    return rows as unknown as T[];
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await -- better-sqlite3 is synchronous, interface requires Promise
   async exec(
     sql: string,
     parameters?: SqlParameters,
@@ -38,6 +40,7 @@ export class BetterSqlite3Client implements DatabaseClient {
     };
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await -- better-sqlite3 is synchronous, interface requires Promise
   async close(): Promise<void> {
     this.#db.close();
   }

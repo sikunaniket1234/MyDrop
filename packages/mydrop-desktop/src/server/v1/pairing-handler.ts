@@ -17,6 +17,7 @@ export class PairingHandler {
     this.#db = db;
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await -- returns synchronously, interface requires Promise
   async initiatePairing(
     deviceId: string,
     deviceName: string,

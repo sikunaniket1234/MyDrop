@@ -37,8 +37,9 @@ export class SyncPeer {
   }
 
   public start(): void {
-    this.#socket.on("message", (data) => {
-      void this.#handleMessage(data.toString());
+    this.#socket.on("message", (data: Buffer | ArrayBuffer | Buffer[] | string) => {
+      const raw = typeof data === "string" ? data : Buffer.from(data as ArrayBuffer).toString("utf8");
+      void this.#handleMessage(raw);
     });
 
     this.#socket.on("close", () => {
@@ -58,7 +59,7 @@ export class SyncPeer {
 
   public async sendEvents(events: readonly SyncEvent[]): Promise<void> {
     if (!this.#ready || events.length === 0) return;
-    this.#send({ type: "sync.events", events });
+    await Promise.resolve(this.#send({ type: "sync.events", events }));
   }
 
   public close(): void {
@@ -82,7 +83,7 @@ export class SyncPeer {
     let msg: SyncProtocolMessage;
     try {
       msg = parseSyncMessage(raw);
-    } catch (_err) {
+    } catch {
       return;
     }
 

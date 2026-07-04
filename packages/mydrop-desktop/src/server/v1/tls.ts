@@ -24,12 +24,25 @@ export async function readTlsCredentials(): Promise<TlsCredentials> {
   };
 }
 
+function findOpenssl(): string {
+  const common = [
+    "C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe",
+    "C:\\Program Files (x86)\\OpenSSL\\bin\\openssl.exe",
+    "C:\\Program Files\\OpenSSL\\bin\\openssl.exe",
+  ];
+  for (const p of common) {
+    if (existsSync(p)) return p;
+  }
+  return "openssl";
+}
+
 export async function tryGenerateSelfSignedCert(): Promise<boolean> {
   if (hasTlsCredentials()) return true;
 
   await mkdir(CERT_DIR, { recursive: true });
 
-  const result = spawnSync("openssl", [
+  const openssl = findOpenssl();
+  const result = spawnSync(openssl, [
     "req",
     "-x509",
     "-newkey", "rsa:2048",

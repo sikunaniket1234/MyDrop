@@ -32,14 +32,15 @@ const deviceId = process.env.MYDROP_DEVICE_ID ?? `desktop_${Date.now().toString(
 const fileStore = new ContentStore(v1Client, new NodeChunkStore(filesDir), sha256);
 const pairingHandler = new PairingHandler(v1Client);
 
-let handler: (req: IncomingMessage, res: ServerResponse) => void;
+// eslint-disable-next-line prefer-const -- handler is captured in closures before assignment
+let handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 
 const useTls = process.env.MYDROP_TLS === "1" && hasTlsCredentials();
 let server: ReturnType<typeof createHttpServer>;
 
 if (useTls) {
   const creds = await readTlsCredentials();
-  server = createHttpsServer({ key: creds.key, cert: creds.cert }, (req, res) => handler(req, res));
+  server = createHttpsServer({ key: creds.key, cert: creds.cert }, (req, res) => { void handler(req, res); });
   console.log("[tls] Using self-signed certificate");
 } else {
   if (process.env.MYDROP_TLS === "1" && !hasTlsCredentials()) {
@@ -47,14 +48,14 @@ if (useTls) {
     const ok = await tryGenerateSelfSignedCert();
     if (ok) {
       const creds = await readTlsCredentials();
-      server = createHttpsServer({ key: creds.key, cert: creds.cert }, (req, res) => handler(req, res));
+      server = createHttpsServer({ key: creds.key, cert: creds.cert }, (req, res) => { void handler(req, res); });
       console.log("[tls] Generated self-signed certificate");
     } else {
       console.log("[tls] openssl not available, falling back to HTTP");
-      server = createHttpServer((req, res) => handler(req, res));
+      server = createHttpServer((req, res) => { void handler(req, res); });
     }
   } else {
-    server = createHttpServer((req, res) => handler(req, res));
+    server = createHttpServer((req, res) => { void handler(req, res); });
   }
 }
 const syncServer = new SyncServer(server, v1Client, deviceId);
@@ -95,7 +96,7 @@ async function dispatchRestRouter(
       if (query.tag) q.tag = query.tag;
       if (query.q) q.q = query.q;
       if (query.cursor) q.cursor = query.cursor;
-      return await router.items.list(q as { type?: string; tag?: string; q?: string; cursor?: string });
+      return await router.items.list(q);
     }
     if (path === "/api/items" && method === "POST") {
       const body = await readJson(request);
@@ -400,7 +401,7 @@ server.listen(port, "0.0.0.0", () => {
   mdns.start();
   console.log(`[mdns] Advertising _mydrop._tcp.local on port ${port}`);
   gcTimer = setInterval(() => {
-    syncServer.engine.gcTombstones().then(count => {
+    void syncServer.engine.gcTombstones().then(count => {
       if (count > 0) console.log(`[gc] Reclaimed ${count} tombstones`);
     });
   }, GC_INTERVAL_MS);
