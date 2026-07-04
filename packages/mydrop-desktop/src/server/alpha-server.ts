@@ -1,5 +1,5 @@
 import type { CreateAlphaFileItem, CreateAlphaTextItem, ItemType } from "@mydrop/core";
-import { ContentStore, sha256 } from "@mydrop/core";
+import { ContentStore, sha256, createApiRouter } from "@mydrop/core";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
@@ -58,6 +58,7 @@ if (useTls) {
   }
 }
 const syncServer = new SyncServer(server, v1Client, deviceId);
+const restRouter = createApiRouter(syncServer.engine, v1Client, fileStore);
 const io = new Server(server, { cors: { origin: "*" } });
 
 io.on("connection", async (socket) => {
@@ -78,14 +79,113 @@ const V1_FILE_COMPLETE_RE = new RegExp("^/v1/files/([^/]+)/complete$");
 const V1_ITEM_CONFLICTS_RE = new RegExp("^/v1/items/([^/]+)/conflicts$");
 const V1_ITEM_RESOLVE_RE = new RegExp("^/v1/items/([^/]+)/resolve$");
 
+// REST router dispatch
+async function dispatchRestRouter(
+  router: ReturnType<typeof createApiRouter>,
+  method: string,
+  path: string,
+  query: Record<string, string>,
+  request: IncomingMessage,
+): Promise<{ status: number; body?: unknown; error?: { code: string; message: string } } | null> {
+  try {
+    // Items
+    if (path === "/api/items" && method === "GET") {
+      const q: Record<string, string> = {};
+      if (query.type) q.type = query.type;
+      if (query.tag) q.tag = query.tag;
+      if (query.q) q.q = query.q;
+      if (query.cursor) q.cursor = query.cursor;
+      return await router.items.list(q as { type?: string; tag?: string; q?: string; cursor?: string });
+    }
+    if (path === "/api/items" && method === "POST") {
+      const body = await readJson(request);
+      return await router.items.create(body as { type: string; content?: string | null; fileId?: string | null; title?: string });
+    }
+    if (path.startsWith("/api/items/") && method === "PATCH") {
+      const id = path.split("/")[3]!;
+      const body = await readJson(request);
+      return await router.items.update(id, body as { content?: string; tags?: string[] });
+    }
+    if (path.startsWith("/api/items/") && method === "DELETE") {
+      const id = path.split("/")[3]!;
+      return await router.items.remove(id);
+    }
+    if (path.startsWith("/api/items/") && path.endsWith("/conflicts") && method === "GET") {
+      const id = path.split("/")[3]!;
+      return await router.items.listConflicts(id);
+    }
+    if (path.startsWith("/api/items/") && path.endsWith("/resolve") && method === "POST") {
+      const id = path.split("/")[3]!;
+      const body = await readJson(request);
+      return await router.items.resolve(id, body as { keep: "local" | "remote" | "both" });
+    }
+
+    // Devices
+    if (path === "/api/devices" && method === "GET") {
+      return await router.devices.list();
+    }
+    if (path === "/api/devices/pairing" && method === "POST") {
+      const body = await readJson(request);
+      return await router.devices.initiatePairing(body as { deviceName: string });
+    }
+    if (path.startsWith("/api/devices/") && path.endsWith("/pairing/confirm") && method === "POST") {
+      const deviceId = path.split("/")[3]!;
+      const body = await readJson(request);
+      return await router.devices.confirmPairing(deviceId, body as { pairingCode: string; deviceName: string });
+    }
+    if (path.startsWith("/api/devices/") && path.endsWith("/revoke") && method === "POST") {
+      const deviceId = path.split("/")[3]!;
+      return await router.devices.revoke(deviceId);
+    }
+
+    // Files
+    if (path.startsWith("/api/files/") && method === "GET") {
+      const fileId = path.split("/")[3]!;
+      return await router.files.getFile(fileId);
+    }
+    if (path.startsWith("/api/files/") && path.match(/\/chunks\/\d+$/) && method === "GET") {
+      const parts = path.split("/");
+      const fileId = parts[3]!;
+      const chunkIndex = Number.parseInt(parts[5]!, 10);
+      return await router.files.getChunk(fileId, chunkIndex);
+    }
+
+    // Share
+    if (path === "/api/share" && method === "POST") {
+      const body = await readJson(request);
+      return await router.share.share(body as { type: string; content?: string; fileId?: string; title?: string });
+    }
+
+    // Health
+    if (path === "/api/health" && method === "GET") {
+      return await router.health.getHealth();
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 handler = async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Headers", "content-type");
-  response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS,DELETE,PATCH");
 
   if (request.method === "OPTIONS") {
     response.writeHead(204);
     response.end();
+    return;
+  }
+
+  // Try REST router first
+  const url = new URL(request.url ?? "/", `http://localhost:${port}`);
+  const path = url.pathname;
+  const query = Object.fromEntries(url.searchParams.entries());
+
+  const restResult = await dispatchRestRouter(restRouter, request.method ?? "GET", path, query, request);
+  if (restResult) {
+    sendJson(response, restResult.status, "body" in restResult ? restResult.body : { error: restResult.error });
     return;
   }
 
