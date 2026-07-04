@@ -13,6 +13,7 @@ import {
   type DatabaseClient,
   type Item,
 } from "@mydrop/core";
+import { randomBytes } from "@noble/hashes/utils.js";
 import { OpSqliteAdapter } from "../db/op-sqlite-adapter.js";
 import { readVaultState, writeVaultState, type VaultMode } from "./vault-state.js";
 
@@ -62,8 +63,7 @@ export async function openV1MobileStore(
   }
 
   if (state.mode === "auto" && !state.vaultKeyHex && passphrase) {
-    const saltBytes = new Uint8Array(16);
-    crypto.getRandomValues(saltBytes);
+    const saltBytes = randomBytes(16);
     const vaultKey = await deriveVaultKeyFromPassphrase(passphrase, saltBytes);
     const vaultKeyHex = vaultKeyToHex(vaultKey);
     const dbKeyHex = vaultKeyToDbEncryptionKeyHex(vaultKeyHex);

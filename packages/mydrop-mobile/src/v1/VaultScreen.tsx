@@ -15,6 +15,7 @@ import {
   bytesToHex,
 } from "@mydrop/core";
 import { readVaultState, writeVaultState, type VaultMode } from "./vault-state.js";
+import { randomBytes } from "@noble/hashes/utils.js";
 
 export interface VaultScreenResult {
   vaultMode: VaultMode;
@@ -53,8 +54,7 @@ export function VaultScreen({ onUnlock, onSkip }: Props): React.ReactElement {
 
     setBusy(true);
     try {
-      const saltBytes = new Uint8Array(16);
-      crypto.getRandomValues(saltBytes);
+      const saltBytes = randomBytes(16);
       await deriveVaultKeyFromPassphrase(passphrase, saltBytes);
 
       await writeVaultState({

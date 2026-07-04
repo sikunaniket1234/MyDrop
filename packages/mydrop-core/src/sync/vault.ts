@@ -1,3 +1,8 @@
+import { pbkdf2 } from "@noble/hashes/pbkdf2.js";
+import { hkdf } from "@noble/hashes/hkdf.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { randomBytes } from "@noble/hashes/utils.js";
+
 const VAULT_KEY_BYTES = 32;
 const SALT_BYTES = 16;
 const PBKDF2_ITERATIONS = 100_000;
@@ -8,19 +13,8 @@ export interface VaultKey {
 }
 
 export function generateVaultKey(): VaultKey {
-  const key = new Uint8Array(VAULT_KEY_BYTES);
-  const salt = new Uint8Array(SALT_BYTES);
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    crypto.getRandomValues(key);
-    crypto.getRandomValues(salt);
-  } else {
-    for (let i = 0; i < VAULT_KEY_BYTES; i++) {
-      key[i] = Math.floor(Math.random() * 256);
-    }
-    for (let i = 0; i < SALT_BYTES; i++) {
-      salt[i] = Math.floor(Math.random() * 256);
-    }
-  }
+  const key = randomBytes(VAULT_KEY_BYTES);
+  const salt = randomBytes(SALT_BYTES);
   return { key, salt };
 }
 
@@ -28,52 +22,19 @@ export async function deriveVaultKeyFromPassphrase(
   passphrase: string,
   salt: Uint8Array,
 ): Promise<VaultKey> {
-  const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(passphrase),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
-  );
-  const derived = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt: salt as unknown as BufferSource,
-      iterations: PBKDF2_ITERATIONS,
-      hash: "SHA-256",
-    },
-    keyMaterial,
-    256,
-  );
-  return { key: new Uint8Array(derived), salt };
+  const derived = pbkdf2(sha256, passphrase, salt, {
+    c: PBKDF2_ITERATIONS,
+    dkLen: VAULT_KEY_BYTES,
+  });
+  return { key: derived, salt };
 }
 
 export async function deriveDbKey(
   vaultKey: VaultKey,
   purpose: string,
 ): Promise<Uint8Array> {
-    const encoder = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey(
-      "raw",
-      vaultKey.key as unknown as ArrayBuffer,
-      "HKDF",
-      false,
-      ["deriveBits"],
-    );
-
-    const derived = await crypto.subtle.deriveBits(
-      {
-        name: "HKDF",
-        salt: vaultKey.salt as unknown as ArrayBuffer,
-        info: encoder.encode(`mydrop-${purpose}`),
-        hash: "SHA-256",
-      },
-      keyMaterial,
-      256,
-    );
-
-    return new Uint8Array(derived);
+  const info = new TextEncoder().encode(`mydrop-${purpose}`);
+  return hkdf(sha256, vaultKey.key, vaultKey.salt, info, VAULT_KEY_BYTES);
 }
 
 export function vaultKeyToHex(key: VaultKey): string {

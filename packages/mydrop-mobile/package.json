@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@mydrop/core": "workspace:*",
+    "@noble/hashes": "^2.2.0",
     "@op-engineering/op-sqlite": "^17.0.0",
     "react": "^19.2.7",
     "react-native": "^0.86.0",
