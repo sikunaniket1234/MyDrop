@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import {
-  SafeAreaView,
+  Platform,
   StatusBar,
   StyleSheet,
   Text,
@@ -36,35 +36,42 @@ export function VaultScreen({ onUnlock, onSkip }: Props): React.ReactElement {
 
   async function checkState(): Promise<"setup" | "unlock" | "unlocked"> {
     const state = await readVaultState();
+    console.warn("[DEBUG] checkState: mode=" + state.mode + " vaultKeyHex=" + (state.vaultKeyHex ?? "null") + " salt=" + (state.passphraseSalt ?? "null"));
     if (state.mode === "passphrase") return "unlock";
     if (state.mode === "auto" && state.vaultKeyHex) return "unlocked";
     return "setup";
   }
 
   async function handleSetPassphrase(): Promise<void> {
+    console.warn("[DEBUG] handleSetPassphrase called");
     setError(null);
     if (passphrase.length < 4) {
+      console.warn("[DEBUG] passphrase too short: " + passphrase.length);
       setError("Passphrase must be at least 4 characters");
       return;
     }
     if (passphrase !== confirmPassphrase) {
+      console.warn("[DEBUG] passphrases do not match");
       setError("Passphrases do not match");
       return;
     }
 
     setBusy(true);
     try {
+      console.warn("[DEBUG] generating salt");
       const saltBytes = randomBytes(16);
-      await deriveVaultKeyFromPassphrase(passphrase, saltBytes);
-
+      console.warn("[DEBUG] deriving vault key");
+      deriveVaultKeyFromPassphrase(passphrase, saltBytes);
+      console.warn("[DEBUG] vault key derived, writing state");
       await writeVaultState({
         mode: "passphrase",
         passphraseSalt: bytesToHex(saltBytes),
         vaultKeyHex: null,
       });
-
+      console.warn("[DEBUG] vault state written, calling onUnlock");
       onUnlock({ vaultMode: "passphrase", passphrase });
     } catch (err: unknown) {
+      console.warn("[DEBUG] handleSetPassphrase FAILED: " + (err instanceof Error ? err.message : String(err)));
       setError(err instanceof Error ? err.message : "Failed to set passphrase");
     } finally {
       setBusy(false);
@@ -72,6 +79,7 @@ export function VaultScreen({ onUnlock, onSkip }: Props): React.ReactElement {
   }
 
   async function handleUnlock(): Promise<void> {
+    console.warn("[DEBUG] handleUnlock called");
     setError(null);
     if (!passphrase) {
       setError("Enter your passphrase");
@@ -95,13 +103,17 @@ export function VaultScreen({ onUnlock, onSkip }: Props): React.ReactElement {
   }
 
   async function handleAuto(): Promise<void> {
+    console.warn("[DEBUG] VaultScreen handleAuto called");
     setBusy(true);
     try {
       const vaultKey = generateVaultKey();
+      console.warn("[DEBUG] VaultScreen vaultKey generated");
       const vaultKeyHex = vaultKeyToHex(vaultKey);
       await writeVaultState({ mode: "auto", passphraseSalt: null, vaultKeyHex });
+      console.warn("[DEBUG] VaultScreen vault state written, calling onUnlock");
       onUnlock({ vaultMode: "auto", passphrase: "" });
     } catch (err: unknown) {
+      console.warn("[DEBUG] VaultScreen handleAuto FAILED: " + (err instanceof Error ? err.message : String(err)));
       setError(err instanceof Error ? err.message : "Failed to initialize");
     } finally {
       setBusy(false);
@@ -118,18 +130,18 @@ export function VaultScreen({ onUnlock, onSkip }: Props): React.ReactElement {
 
   if (busy) {
     return (
-      <SafeAreaView style={styles.root}>
+      <View style={styles.root}>
         <StatusBar barStyle="dark-content" />
         <View style={styles.center}>
           <Text style={styles.loading}>Initializing vault...</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (mode === "passphrase") {
     return (
-      <SafeAreaView style={styles.root}>
+      <View style={styles.root}>
         <StatusBar barStyle="dark-content" />
         <View style={styles.card}>
           <Text style={styles.title}>Unlock Vault</Text>
@@ -147,12 +159,12 @@ export function VaultScreen({ onUnlock, onSkip }: Props): React.ReactElement {
             <Text style={styles.primaryButtonText}>Unlock</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.root}>
+    <View style={styles.root}>
       <StatusBar barStyle="dark-content" />
       <View style={styles.card}>
         <Text style={styles.title}>Secure Your Vault</Text>
@@ -189,7 +201,7 @@ export function VaultScreen({ onUnlock, onSkip }: Props): React.ReactElement {
           <Text style={styles.linkText}>Skip for now</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -198,6 +210,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f5f7fb",
     flex: 1,
     justifyContent: "center",
+    paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0,
   },
   center: {
     alignItems: "center",

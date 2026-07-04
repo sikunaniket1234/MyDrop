@@ -35,12 +35,13 @@ class OpSqliteClient implements DatabaseClient {
 }
 
 export class OpSqliteAdapter implements DatabaseAdapter {
-  public open(options: DatabaseOpenOptions): Promise<DatabaseClient> {
+  public async open(options: DatabaseOpenOptions): Promise<DatabaseClient> {
     const nativeOptions = {
       name: options.name,
       ...(options.location === undefined ? {} : { location: options.location }),
       ...(options.encryptionKey === undefined ? {} : { encryptionKey: options.encryptionKey }),
     };
-    return Promise.resolve(new OpSqliteClient(open(nativeOptions)));
+    const db = open(nativeOptions);
+    return new OpSqliteClient(db);
   }
 }

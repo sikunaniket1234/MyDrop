@@ -1,6 +1,6 @@
 import {
   SyncEngine,
-  V1_SCHEMA_SQL,
+  ALL_MIGRATIONS,
   deriveDbKey,
   deriveVaultKeyFromPassphrase,
   generateVaultKey,
@@ -13,6 +13,7 @@ import {
   type DatabaseClient,
   type Item,
 } from "@mydrop/core";
+import { StaticMigrationSource, migrate } from "@mydrop/core";
 import { randomBytes } from "@noble/hashes/utils.js";
 import { OpSqliteAdapter } from "../db/op-sqlite-adapter.js";
 import { readVaultState, writeVaultState, type VaultMode } from "./vault-state.js";
@@ -100,7 +101,10 @@ export async function openV1MobileStore(
 }
 
 async function initStore(client: DatabaseClient): Promise<V1MobileStore> {
-  await client.exec(V1_SCHEMA_SQL);
+  const mobileMigrations = ALL_MIGRATIONS.filter(
+    m => !m.filename.includes("0004"),
+  );
+  await migrate(client, new StaticMigrationSource(mobileMigrations));
   await client.exec(`
     CREATE TABLE IF NOT EXISTS _meta (
       key TEXT PRIMARY KEY,

@@ -1,6 +1,7 @@
 import type { Item } from "@mydrop/core";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Platform,
   StatusBar,
   StyleSheet,
   Text,
@@ -39,7 +40,6 @@ const TABS: TabItem[] = [
 
 export function MyDropAlphaApp(): React.ReactElement {
   const [phase, setPhase] = useState<AppPhase>("vault");
-  const [passphrase, setPassphrase] = useState("");
   const [screen, setScreen] = useState<Screen>("inbox");
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [apiBase, setApiBase] = useState("http://10.0.2.2:4317");
@@ -58,11 +58,11 @@ export function MyDropAlphaApp(): React.ReactElement {
     [apiBase],
   );
 
-  async function handleVaultUnlock(): Promise<void> {
-    const result = await openV1MobileStore(passphrase);
-    if (result.needsPassphrase) return;
+  async function initStore(result: { store: V1MobileStore }): Promise<void> {
+    console.warn("[DEBUG] initStore: setting store and phase=main");
     setStore(result.store);
     setPhase("main");
+    console.warn("[DEBUG] initStore: done");
 
     const handler = new ShareIntentHandler(result.store);
     handler.subscribe(() => {
@@ -78,6 +78,18 @@ export function MyDropAlphaApp(): React.ReactElement {
       },
     });
     syncPeer.current = peer;
+  }
+
+  async function handleVaultUnlock(passphraseValue: string): Promise<void> {
+    try {
+      console.warn("[DEBUG] handleVaultUnlock: calling openV1MobileStore");
+      const result = await openV1MobileStore(passphraseValue);
+      console.warn("[DEBUG] handleVaultUnlock: needsPassphrase=" + result.needsPassphrase);
+      if (result.needsPassphrase) return;
+      await initStore(result);
+    } catch (err: unknown) {
+      console.warn("[DEBUG] handleVaultUnlock FAILED: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   useEffect(() => {
@@ -134,30 +146,19 @@ export function MyDropAlphaApp(): React.ReactElement {
     return (
       <VaultScreen
         onUnlock={result => {
-          setPassphrase(result.passphrase);
-          void handleVaultUnlock();
+          void handleVaultUnlock(result.passphrase);
         }}
         onSkip={() => {
-          void openV1MobileStore().then(result => {
-            if (result.needsPassphrase) return;
-            setStore(result.store);
-            setPhase("main");
-
-            const handler = new ShareIntentHandler(result.store);
-            handler.subscribe(() => {
-              void result.store.listItems().then(setItems);
+          console.warn("[DEBUG] onSkip called");
+          void openV1MobileStore()
+            .then(async result => {
+              console.warn("[DEBUG] onSkip: needsPassphrase=" + result.needsPassphrase);
+              if (result.needsPassphrase) return;
+              await initStore(result);
+            })
+            .catch(err => {
+              console.warn("[DEBUG] onSkip FAILED: " + (err instanceof Error ? err.message : String(err)));
             });
-            handler.startListening();
-            shareHandlerRef.current = handler;
-
-            const peer = new SyncPeerClient(result.store.syncEngine, {
-              onStatusChange: setSyncStatus,
-              onSyncComplete: () => {
-                void result.store.listItems().then(setItems);
-              },
-            });
-            syncPeer.current = peer;
-          });
         }}
       />
     );
@@ -310,6 +311,7 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: theme.surface0,
+    paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0,
   },
   header: {
     flexDirection: "row",

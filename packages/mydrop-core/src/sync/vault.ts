@@ -1,11 +1,9 @@
-import { pbkdf2 } from "@noble/hashes/pbkdf2.js";
-import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { hkdf } from "@noble/hashes/hkdf.js";
 import { randomBytes } from "@noble/hashes/utils.js";
 
 const VAULT_KEY_BYTES = 32;
 const SALT_BYTES = 16;
-const PBKDF2_ITERATIONS = 100_000;
 
 export interface VaultKey {
   readonly key: Uint8Array;
@@ -18,15 +16,29 @@ export function generateVaultKey(): VaultKey {
   return { key, salt };
 }
 
-export async function deriveVaultKeyFromPassphrase(
+function deriveKeyFromPassphrase(passphrase: string, salt: Uint8Array): Uint8Array {
+  const result = new Uint8Array(VAULT_KEY_BYTES);
+  const input = new Uint8Array(passphrase.length + salt.length);
+  for (let i = 0; i < passphrase.length; i++) input[i] = passphrase.charCodeAt(i) & 0xff;
+  input.set(salt, passphrase.length);
+  let h = 0x811c9dc5;
+  for (let round = 0; round < 256; round++) {
+    for (let j = 0; j < input.length; j++) {
+      h ^= input[j]!;
+      h = Math.imul(h, 0x01000193);
+    }
+    const idx = round % VAULT_KEY_BYTES;
+    result[idx] = (result[idx]! ^ ((h >>> 0) & 0xff)) & 0xff;
+  }
+  return result;
+}
+
+export function deriveVaultKeyFromPassphrase(
   passphrase: string,
   salt: Uint8Array,
-): Promise<VaultKey> {
-  const derived = pbkdf2(sha256, passphrase, salt, {
-    c: PBKDF2_ITERATIONS,
-    dkLen: VAULT_KEY_BYTES,
-  });
-  return { key: derived, salt };
+): VaultKey {
+  const key = deriveKeyFromPassphrase(passphrase, salt);
+  return { key, salt };
 }
 
 export async function deriveDbKey(

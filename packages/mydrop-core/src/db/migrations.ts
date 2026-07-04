@@ -101,7 +101,7 @@ export function readMigrationFile(name: string, sql: string): Migration {
 
 export const MIGRATION_0001 = readMigrationFile(
   "0001_init.sql",
-  `CREATE TABLE applied_migrations (
+  `CREATE TABLE IF NOT EXISTS applied_migrations (
     filename    TEXT PRIMARY KEY,
     applied_at  INTEGER NOT NULL
 );
