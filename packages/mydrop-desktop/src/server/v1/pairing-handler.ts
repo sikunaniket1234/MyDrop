@@ -23,7 +23,7 @@ export class PairingHandler {
     deviceName: string,
   ): Promise<{ pairingCode: string }> {
     const pairingCode = generatePairingToken();
-    this.#pending.set(deviceId, {
+    this.#pending.set(pairingCode, {
       deviceId,
       deviceName,
       pairingCode,
@@ -37,13 +37,12 @@ export class PairingHandler {
     pairingCode: string,
     deviceName: string,
   ): Promise<boolean> {
-    const pending = this.#pending.get(deviceId);
+    const pending = this.#pending.get(pairingCode);
     if (!pending) return false;
     if (Date.now() > pending.expiresAt) {
-      this.#pending.delete(deviceId);
+      this.#pending.delete(pairingCode);
       return false;
     }
-    if (pending.pairingCode !== pairingCode) return false;
 
     await this.#db.exec(
       `INSERT OR REPLACE INTO devices (id, name, public_key, protocol_version, trusted_at, status)
@@ -51,7 +50,7 @@ export class PairingHandler {
       [deviceId, deviceName, Date.now()],
     );
 
-    this.#pending.delete(deviceId);
+    this.#pending.delete(pairingCode);
     return true;
   }
 

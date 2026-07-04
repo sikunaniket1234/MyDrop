@@ -60,8 +60,10 @@ export function PairingScreen({
     }
     setLoading(true);
     setError(null);
+    const url = `${apiBase}/v1/pairing/confirm`;
+    console.warn("[DEBUG] PairingScreen: POST " + url);
     try {
-      const res = await fetch(`${apiBase}/v1/pairing/confirm`, {
+      const res = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -70,12 +72,14 @@ export function PairingScreen({
           deviceName: deviceName || "Phone",
         }),
       });
+      console.warn("[DEBUG] PairingScreen: status=" + res.status);
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
         throw new Error(data.error ?? "Pairing failed");
       }
       setStep("success");
     } catch (err: unknown) {
+      console.warn("[DEBUG] PairingScreen FAILED: " + (err instanceof Error ? err.message : String(err)));
       setError(err instanceof Error ? err.message : "Pairing failed");
     } finally {
       setLoading(false);

@@ -74,11 +74,14 @@ export function MyDropAlphaApp(): React.ReactElement {
 
   async function handleVaultUnlock(passphraseValue: string): Promise<void> {
     try {
+      console.warn("[DEBUG] handleVaultUnlock: calling openV1MobileStore");
       const result = await openV1MobileStore(passphraseValue);
+      console.warn("[DEBUG] handleVaultUnlock: needsPassphrase=" + result.needsPassphrase);
       if (result.needsPassphrase) return;
       await initStore(result);
-    } catch {
-      // error handled by VaultScreen
+      console.warn("[DEBUG] handleVaultUnlock: initStore done");
+    } catch (err: unknown) {
+      console.warn("[DEBUG] handleVaultUnlock FAILED: " + (err instanceof Error ? err.message : String(err)));
     }
   }
 

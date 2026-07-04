@@ -34,13 +34,17 @@ export function DevicesScreen({
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchDevices = useCallback(async (): Promise<void> => {
+    console.warn("[DEBUG] fetchDevices: calling " + apiBase + "/v1/devices");
     try {
       const res = await fetch(`${apiBase}/v1/devices`);
+      console.warn("[DEBUG] fetchDevices: status=" + res.status);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { devices: DeviceEntry[] };
+      console.warn("[DEBUG] fetchDevices: got " + data.devices.length + " devices");
       setDevices(data.devices);
       setError(null);
     } catch (err: unknown) {
+      console.warn("[DEBUG] fetchDevices FAILED: " + (err instanceof Error ? err.message : String(err)));
       setError(
         err instanceof Error
           ? `Cannot reach server: ${err.message}`
