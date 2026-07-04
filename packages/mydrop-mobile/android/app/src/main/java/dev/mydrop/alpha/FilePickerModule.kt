@@ -21,7 +21,7 @@ class FilePickerModule(reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun pickFile(promise: Promise) {
-        val activity = currentActivity
+        val activity = reactApplicationContext.currentActivity
         if (activity == null) {
             promise.reject("NO_ACTIVITY", "No current activity")
             return
@@ -34,6 +34,7 @@ class FilePickerModule(reactContext: ReactApplicationContext) :
             type = "*/*"
         }
 
+        @Suppress("DEPRECATION")
         activity.startActivityForResult(intent, PICK_FILE_REQUEST)
     }
 

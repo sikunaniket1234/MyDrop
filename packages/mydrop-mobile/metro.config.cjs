@@ -1,6 +1,5 @@
 const path = require("node:path");
 const fs = require("node:fs");
-const { resolve } = require("metro-resolver");
 const { getDefaultConfig, mergeConfig } = require("@react-native/metro-config");
 
 const workspaceRoot = path.resolve(__dirname, "../..");
@@ -25,17 +24,21 @@ module.exports = mergeConfig(getDefaultConfig(__dirname), {
     ),
     nodeModulesPaths: [path.join(packageRoot, "node_modules"), path.join(workspaceRoot, "node_modules")],
     resolveRequest: (context, moduleName, platform) => {
+      const defaultResolve = context.resolveRequest;
+      if (!defaultResolve) {
+        throw new Error("Metro context missing resolveRequest — cannot resolve modules");
+      }
       const origin = context.originModulePath ?? "";
       const isMyDropSource = origin.startsWith(path.join(packageRoot, "src"));
       if (isMyDropSource && moduleName.startsWith(".") && moduleName.endsWith(".js")) {
         try {
-          return resolve(context, moduleName.replace(/\.js$/, ".ts"), platform);
+          return defaultResolve(context, moduleName.replace(/\.js$/, ".ts"), platform);
         } catch {
-          return resolve(context, moduleName.replace(/\.js$/, ".tsx"), platform);
+          return defaultResolve(context, moduleName.replace(/\.js$/, ".tsx"), platform);
         }
       }
 
-      return resolve(context, moduleName, platform);
+      return defaultResolve(context, moduleName, platform);
     },
     unstable_enablePackageExports: true,
     unstable_enableSymlinks: true,

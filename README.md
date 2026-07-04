@@ -77,6 +77,36 @@ pnpm --filter @mydrop/desktop dev     # starts HTTP server on :4317 + UI dev ser
 pnpm --filter @mydrop/mobile start    # starts React Native Metro bundler
 ```
 
+### Desktop Quick Launch
+
+Double-click `Start-MyDrop.bat` in the project root. This starts the API server (port 4317) and Vite UI dev server (port 1420).
+
+### Android APK Build
+
+Requires: Android SDK (`ANDROID_HOME`), JDK 21, `hermes-compiler` (bundled with `react-native`).
+
+```sh
+# 1. Build core
+pnpm --filter @mydrop/core build
+
+# 2. Fix hermesc symlink (pnpm doesn't hoist it)
+#    The build uses node_modules/hermes-compiler which must resolve.
+#    If the build fails with "Couldn't determine Hermesc location", create a junction:
+mkdir "packages\mydrop-mobile\node_modules\hermes-compiler"
+mklink /J "packages\mydrop-mobile\node_modules\hermes-compiler\hermesc" ^
+  "node_modules\.pnpm\hermes-compiler@*\node_modules\hermes-compiler\hermesc"
+
+# 3. Build release APK (skip lint to avoid OOM)
+set ANDROID_HOME=C:\Users\<you>\AppData\Local\Android\Sdk
+set JAVA_HOME=C:\Program Files\Java\jdk-21.0.10
+cd packages\mydrop-mobile\android
+gradlew.bat assembleRelease --no-daemon -x lintVitalAnalyzeRelease -x lintVitalReportRelease -x lintVitalRelease -x lintVitalDebug -x lint
+```
+
+APK output: `packages/mydrop-mobile/android/app/build/outputs/apk/release/app-release.apk`
+
+A pre-built APK is available at: `C:\Users\User\Desktop\MyDrop.apk`
+
 ## Validation
 
 ```sh
@@ -110,7 +140,7 @@ The desktop node runs an HTTP server (port 4317) with Socket.IO for real-time ev
 All P0–P3 items are implemented. See [`docs/`](docs/) and [`ai/`](ai/) for detailed design documents and architecture decisions.
 
 ### What's left
-- Tauri binary build (requires Rust toolchain not present on dev machine)
+- Tauri binary build (Rust toolchain available; run `pnpm build:tauri`)
 - Vault key management UI polish (passphrase change, biometric unlock)
 - Web thin client polish
 - Testing on real hardware/emulators
