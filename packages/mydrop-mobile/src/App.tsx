@@ -1,5 +1,5 @@
 import type { Item } from "@mydrop/core";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Platform,
   StatusBar,
@@ -31,6 +31,14 @@ type Screen =
   | "pairing"
   | "conflicts";
 
+function normalizeUrl(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed;
+  }
+  return `http://${trimmed}`;
+}
+
 export function MyDropAlphaApp(): React.ReactElement {
   const [phase, setPhase] = useState<AppPhase>("vault");
   const [screen, setScreen] = useState<Screen>("inbox");
@@ -43,72 +51,43 @@ export function MyDropAlphaApp(): React.ReactElement {
   const [connected, setConnected] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncPeerStatus>("disconnected");
   const [conflictCount, setConflictCount] = useState(0);
+  const [userManualConnect, setUserManualConnect] = useState(false);
   const syncPeer = useRef<SyncPeerClient | null>(null);
   const mdnsRef = useRef<MdnsBrowser | null>(null);
   const shareHandlerRef = useRef<ShareIntentHandler | null>(null);
+  const socketRef = useRef<ReturnType<typeof io> | null>(null);
 
-  const socket = useMemo(
-    () => io(apiBase, { autoConnect: false, transports: ["websocket"] }),
-    [apiBase],
-  );
+  function connectToServer(url: string): void {
+    const normalized = normalizeUrl(url);
+    console.warn("[DEBUG] connectToServer: " + normalized);
 
-  async function initStore(result: { store: V1MobileStore }): Promise<void> {
-    setStore(result.store);
-    setPhase("main");
-
-    const handler = new ShareIntentHandler(result.store);
-    handler.subscribe(() => {
-      void result.store.listItems().then(setItems);
-    });
-    handler.startListening();
-    shareHandlerRef.current = handler;
-
-    const peer = new SyncPeerClient(result.store.syncEngine, {
-      onStatusChange: setSyncStatus,
-      onSyncComplete: () => {
-        void result.store.listItems().then(setItems);
-      },
-    });
-    syncPeer.current = peer;
-  }
-
-  async function handleVaultUnlock(passphraseValue: string): Promise<void> {
-    try {
-      console.warn("[DEBUG] handleVaultUnlock: calling openV1MobileStore");
-      const result = await openV1MobileStore(passphraseValue);
-      console.warn("[DEBUG] handleVaultUnlock: needsPassphrase=" + result.needsPassphrase);
-      if (result.needsPassphrase) return;
-      await initStore(result);
-      console.warn("[DEBUG] handleVaultUnlock: initStore done");
-    } catch (err: unknown) {
-      console.warn("[DEBUG] handleVaultUnlock FAILED: " + (err instanceof Error ? err.message : String(err)));
+    if (socketRef.current) {
+      socketRef.current.off("connect");
+      socketRef.current.off("disconnect");
+      socketRef.current.off("v1:snapshot");
+      socketRef.current.off("v1:item:created");
+      socketRef.current.off("v1:item:deleted");
+      socketRef.current.off("device:trusted");
+      socketRef.current.disconnect();
     }
-  }
 
-  useEffect(() => {
-    if (phase !== "main" || !store) return;
-    const mdns = new MdnsBrowser(nodes => {
-      for (const node of nodes) {
-        const url = `http://${node.host}:${node.port}`;
-        setApiBase(url);
-        setApiBaseInput(url);
-        break;
-      }
+    setApiBase(normalized);
+    setApiBaseInput(normalized);
+    setUserManualConnect(true);
+    setConnected(false);
+
+    const socket = io(normalized, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
     });
-    mdns.start();
-    mdnsRef.current = mdns;
-    return () => {
-      mdns.stop();
-      shareHandlerRef.current?.stopListening();
-    };
-  }, [phase, store]);
+    socketRef.current = socket;
 
-  useEffect(() => {
-    if (phase !== "main" || !store) return;
-    socket.connect();
     socket.on("connect", () => {
+      console.warn("[DEBUG] socket connected to " + normalized);
       setConnected(true);
-      syncPeer.current?.connect(apiBase);
+      syncPeer.current?.connect(normalized);
     });
     socket.on("disconnect", () => {
       setConnected(false);
@@ -128,20 +107,68 @@ export function MyDropAlphaApp(): React.ReactElement {
     socket.on("v1:item:deleted", (data: { id: string }) => {
       setItems(current => current.filter(i => i.id !== data.id));
     });
-    socket.on("device:trusted", () => {
-      // refresh device list if on devices screen
+    socket.on("device:trusted", () => {});
+    socket.connect();
+  }
+
+  async function initStore(result: { store: V1MobileStore }): Promise<void> {
+    setStore(result.store);
+    setPhase("main");
+
+    const handler = new ShareIntentHandler(result.store);
+    handler.subscribe(() => {
+      void result.store.listItems().then(setItems);
     });
+    handler.startListening();
+    shareHandlerRef.current = handler;
+
+    const peer = new SyncPeerClient(result.store.syncEngine, {
+      onStatusChange: setSyncStatus,
+      onSyncComplete: () => {
+        void result.store.listItems().then(setItems);
+      },
+    });
+    syncPeer.current = peer;
+
+    connectToServer(apiBase);
+  }
+
+  async function handleVaultUnlock(passphraseValue: string): Promise<void> {
+    try {
+      const result = await openV1MobileStore(passphraseValue);
+      if (result.needsPassphrase) return;
+      await initStore(result);
+    } catch (err: unknown) {
+      console.warn("[DEBUG] handleVaultUnlock FAILED: " + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  useEffect(() => {
+    if (phase !== "main" || !store || userManualConnect) return;
+    const mdns = new MdnsBrowser(nodes => {
+      for (const node of nodes) {
+        const url = `http://${node.host}:${node.port}`;
+        console.warn("[DEBUG] mDNS found: " + url);
+        connectToServer(url);
+        break;
+      }
+    });
+    mdns.start();
+    mdnsRef.current = mdns;
     return () => {
-      socket.off("connect");
-      socket.off("disconnect");
-      socket.off("v1:snapshot");
-      socket.off("v1:item:created");
-      socket.off("v1:item:deleted");
-      socket.off("device:trusted");
-      socket.disconnect();
-      syncPeer.current?.disconnect();
+      mdns.stop();
+      shareHandlerRef.current?.stopListening();
     };
-  }, [socket, store, apiBase, phase]);
+  }, [phase, store, userManualConnect]);
+
+  useEffect(() => {
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, []);
 
   const fetchConflictCount = useCallback(async (): Promise<void> => {
     if (!store) return;
@@ -182,9 +209,7 @@ export function MyDropAlphaApp(): React.ReactElement {
               if (result.needsPassphrase) return;
               await initStore(result);
             })
-            .catch(() => {
-              // error
-            });
+            .catch(() => {});
         }}
       />
     );
@@ -236,46 +261,65 @@ export function MyDropAlphaApp(): React.ReactElement {
           </View>
 
           {screen === "inbox" && (
-            <View style={styles.composer}>
-              <TextInput
-                value={text}
-                onChangeText={setText}
-                style={styles.input}
-                multiline
-                placeholder="Share text..."
-                placeholderTextColor={theme.textMuted}
-              />
-              <View style={styles.composerActions}>
+            <>
+              <View style={styles.connectionBar}>
+                <TextInput
+                  value={apiBaseInput}
+                  onChangeText={setApiBaseInput}
+                  style={styles.serverInput}
+                  placeholder="Server IP:port"
+                  placeholderTextColor={theme.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
                 <TouchableOpacity
-                  style={styles.composerBtn}
-                  onPress={() => setApiBase(apiBaseInput.trim())}
+                  style={[styles.connectBtn, connected && styles.connectBtnOk]}
+                  onPress={() => connectToServer(apiBaseInput)}
                 >
-                  <Text style={styles.composerBtnText}>Connect</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.composerBtn}
-                  onPress={() => {
-                    if (text.trim() && store) {
-                      void (async () => {
-                        const item = await store.createItem({
-                          type: "text",
-                          title:
-                            text.length > 48
-                              ? `${text.slice(0, 45)}...`
-                              : text,
-                          content: text,
-                          fileId: null,
-                        });
-                        setItems(current => [item, ...current]);
-                        setText("");
-                      })();
-                    }
-                  }}
-                >
-                  <Text style={styles.composerBtnText}>Send</Text>
+                  <Text style={[styles.connectBtnText, connected && styles.connectBtnTextOk]}>
+                    {connected ? "✓" : "Go"}
+                  </Text>
                 </TouchableOpacity>
               </View>
-            </View>
+              <View style={styles.composer}>
+                <TextInput
+                  value={text}
+                  onChangeText={setText}
+                  style={styles.input}
+                  multiline
+                  placeholder="Share text..."
+                  placeholderTextColor={theme.textMuted}
+                />
+                <View style={styles.composerActions}>
+                  <TouchableOpacity
+                    style={[styles.composerBtn, !connected && styles.composerBtnDisabled]}
+                    disabled={!connected}
+                    onPress={() => {
+                      if (text.trim() && connected) {
+                        void (async () => {
+                          try {
+                            await fetch(`${apiBase}/v1/items`, {
+                              method: "POST",
+                              headers: { "content-type": "application/json" },
+                              body: JSON.stringify({
+                                type: "text",
+                                title: text.length > 48 ? `${text.slice(0, 45)}...` : text,
+                                content: text,
+                              }),
+                            });
+                            setText("");
+                          } catch (err) {
+                            console.warn("[DEBUG] Send failed: " + (err instanceof Error ? err.message : String(err)));
+                          }
+                        })();
+                      }
+                    }}
+                  >
+                    <Text style={styles.composerBtnText}>Send</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </>
           )}
         </>
       )}
@@ -386,9 +430,51 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: theme.textMuted,
   },
-  composer: {
+  connectionBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: 14,
     paddingTop: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 0.5,
+    borderBottomColor: theme.border,
+  },
+  serverInput: {
+    flex: 1,
+    borderWidth: 0.5,
+    borderColor: theme.borderStrong,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    fontFamily: "monospace",
+    color: theme.textPrimary,
+    backgroundColor: theme.surface1,
+  },
+  connectBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 0.5,
+    borderColor: theme.borderAccent,
+    backgroundColor: theme.bgAccent,
+  },
+  connectBtnOk: {
+    borderColor: theme.borderSuccess,
+    backgroundColor: theme.bgSuccess,
+  },
+  connectBtnText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: theme.textAccent,
+  },
+  connectBtnTextOk: {
+    color: theme.textSuccess,
+  },
+  composer: {
+    paddingHorizontal: 14,
+    paddingTop: 4,
     paddingBottom: 4,
     borderBottomWidth: 0.5,
     borderBottomColor: theme.border,
@@ -418,6 +504,9 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     borderColor: theme.borderAccent,
     backgroundColor: theme.bgAccent,
+  },
+  composerBtnDisabled: {
+    opacity: 0.4,
   },
   composerBtnText: {
     fontSize: 12,

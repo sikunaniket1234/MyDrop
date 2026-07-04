@@ -50,7 +50,7 @@ function App(): React.ReactElement {
   const [pairing, setPairing] = useState<PairingSession | null>(null);
   const [pairingLoading, setPairingLoading] = useState(false);
 
-  const socket = useMemo(() => io(apiBase, { transports: ["websocket"] }), []);
+  const socket = useMemo(() => io(apiBase, { transports: ["websocket", "polling"] }), []);
 
   const quickShare = useQuickShare(
     (text) => { void shareText(text); },
