@@ -4,6 +4,8 @@
 
 MyDrop lets you share text, files, and clipboard content across your own devices — no cloud, no third party. A desktop node acts as the sync hub; mobile devices and a thin web client connect over your LAN (or the internet via IP). Everything stays on your infrastructure.
 
+**[User Manual](USER_MANUAL.md)** — Complete guide with screenshots, setup instructions, and troubleshooting.
+
 ---
 
 ## Features
