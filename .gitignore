@@ -38,6 +38,10 @@ pnpm-debug.log*
 history.md
 next.md
 
+# Internal docs
+docs/
+ai/
+
 # Generated HTML
 MyDrop_UI.html
 
